@@ -15,6 +15,10 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;touch-acti
 <body>
 <canvas id="c"></canvas>
 <script>
+// register service worker for MediaPipe cache
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+}
 const c = document.getElementById('c'), ctx = c.getContext('2d');
 let W, H, COLS, ROWS, BLOCK;
 let grid = [];
