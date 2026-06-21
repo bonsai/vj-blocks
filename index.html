@@ -10,9 +10,6 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#000}
 canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:none;touch-action:none}
-#info{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
-  font:12px/1 monospace;color:rgba(255,255,255,.3);pointer-events:none;
-  text-align:center;letter-spacing:1px}
 #mic{position:fixed;top:16px;right:16px;font:12px/1 monospace;
   color:rgba(255,255,255,.4);pointer-events:none;text-align:right;
   transition:color .15s}
@@ -21,7 +18,6 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1‥9:mode │ ←→ │ ?:menu │ M:mic │ C │ R │ F │ +/- │ 📱long-press→jog ]</div>
 <div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
@@ -40,40 +36,51 @@ let frame = 0;
 let autoCycle = false;
 let cycleTimer = 0;
 let showMenu = false; // mode selector overlay
+let showInfo = false; // help deck overlay
 
-// ---- mode display names ----
-const MODE_NAMES = [
-  '🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
-  '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars','👤Body','🌀Voronoi',
-  '📷Live',
-];
-const MODE_COLS = 4; // columns in mode menu grid
+// ---- mode display names (sparse — gaps for high camera slots) ----
+const MODE_NAMES = [];
+MODE_NAMES[0]='🌈Flow'; MODE_NAMES[1]='🔲Grid'; MODE_NAMES[2]='🌊Wave'; MODE_NAMES[3]='🌀Spiral';
+MODE_NAMES[4]='📺Glitch'; MODE_NAMES[5]='🕳Tunnel'; MODE_NAMES[6]='📊Spectrum';
+MODE_NAMES[8]='🔮Plasma'; MODE_NAMES[9]='🔮Meta'; MODE_NAMES[10]='🌊Ripple'; MODE_NAMES[11]='🔮Kaleido';
+MODE_NAMES[12]='✨Stars'; MODE_NAMES[13]='🌀Voronoi';
+MODE_NAMES[98]='👤Body'; MODE_NAMES[99]='👤Silhouette';
+const MODE_TOTAL = 100; // max index + 1
+// Active mode indices (non-empty) for the selector menu
+let MODE_ACTIVE = Object.keys(MODE_NAMES).map(Number).filter(i => MODE_NAMES[i]);
+const MODE_COLS = 4;
 
 // ---- hash routing & mode set ----
 function setMode(n) {
   const prev = mode;
-  mode = ((n % 16) + 16) % 16;
+  mode = ((n % MODE_TOTAL) + MODE_TOTAL) % MODE_TOTAL;
+  // only set if mode has a name, otherwise find nearest
+  while (!MODE_NAMES[mode]) mode = (mode + 1) % MODE_TOTAL;
   location.hash = '#' + mode;
   showToast(MODE_NAMES[mode]);
 
-  // pose auto: on in mode 13/15 (both need camera), off when neither active
+  // camera auto: pose for 98, light cam for 99
   if (prev !== mode) {
-    const needsCam = mode === 13 || mode === 15;
-    const hadCam = prev === 13 || prev === 15;
-    if (needsCam && !poseData.active) initPose();
-    else if (!needsCam && hadCam && poseData.active) deinitPose();
+    if (mode === 98 && !poseData.active) initPose();
+    else if (prev === 98 && poseData.active && mode !== 99) deinitPose();
+    if (mode === 99 && !camLight) initCamLight();
+    else if (prev === 99 && camLight && mode !== 98) deinitCamLight();
   }
 }
 
 function initHash() {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 16) mode = h;
+  if (!isNaN(h) && h >= 0 && h < MODE_TOTAL) mode = h;
+  while (!MODE_NAMES[mode]) mode = (mode + 1) % MODE_TOTAL;
   location.hash = '#' + mode;
 }
 
 window.addEventListener('hashchange', () => {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 16) mode = h;
+  if (!isNaN(h) && h >= 0 && h < MODE_TOTAL) {
+    mode = h;
+    while (!MODE_NAMES[mode]) mode = (mode + 1) % MODE_TOTAL;
+  }
 });
 
 // ---- mode menu overlay ----
@@ -94,12 +101,13 @@ function drawModeMenu() {
 
   // grid
   const cols = MODE_COLS;
-  const rows = Math.ceil(MODE_NAMES.length / cols);
+  const rows = Math.ceil(MODE_ACTIVE.length / cols);
   const cellW = mw / cols, cellH = (mh - 40) / rows;
   const padX = cellW * 0.1, padY = cellH * 0.1;
 
-  for (let i = 0; i < MODE_NAMES.length; i++) {
-    const r = Math.floor(i / cols), c = i % cols;
+  for (let gi = 0; gi < MODE_ACTIVE.length; gi++) {
+    const i = MODE_ACTIVE[gi];
+    const r = Math.floor(gi / cols), c = gi % cols;
     const cx = mx + c * cellW, cy = my + 36 + r * cellH;
     const active = i === mode;
 
@@ -136,14 +144,55 @@ function hitTestMenu(tx, ty) {
   const mw = 500, mh = 360;
   const mx = (W - mw) / 2, my = (H - mh) / 2;
   const cols = MODE_COLS;
-  const rows = Math.ceil(MODE_NAMES.length / cols);
+  const rows = Math.ceil(MODE_ACTIVE.length / cols);
   const cellW = mw / cols, cellH = (mh - 40) / rows;
-  for (let i = 0; i < MODE_NAMES.length; i++) {
-    const r = Math.floor(i / cols), c = i % cols;
+  for (let gi = 0; gi < MODE_ACTIVE.length; gi++) {
+    const r = Math.floor(gi / cols), c = gi % cols;
     const cx = mx + c * cellW, cy = my + 36 + r * cellH;
-    if (tx >= cx && tx <= cx + cellW && ty >= cy && ty <= cy + cellH) return i;
+    if (tx >= cx && tx <= cx + cellW && ty >= cy && ty <= cy + cellH) return MODE_ACTIVE[gi];
   }
   return -1;
+}
+
+// ---- info deck overlay ----
+const HELP_TEXT = [
+  '1-9 jump │ ←→ cycle │ ? menu │ I help',
+  'M mic │ C auto │ R reset │ F fullscreen │ +/- speed',
+  '📱 long-press→jog │ tap→pause │ swipe→mode',
+];
+function drawInfoDeck() {
+  const cw = 340, ch = 120;
+  const cx = (W - cw) / 2, cy = (H - ch) / 2;
+  // card bg
+  ctx.fillStyle = `rgba(10,10,20,0.85)`;
+  const r = 12;
+  ctx.beginPath();
+  ctx.moveTo(cx + r, cy);
+  ctx.lineTo(cx + cw - r, cy);
+  ctx.quadraticCurveTo(cx + cw, cy, cx + cw, cy + r);
+  ctx.lineTo(cx + cw, cy + ch - r);
+  ctx.quadraticCurveTo(cx + cw, cy + ch, cx + cw - r, cy + ch);
+  ctx.lineTo(cx + r, cy + ch);
+  ctx.quadraticCurveTo(cx, cy + ch, cx, cy + ch - r);
+  ctx.lineTo(cx, cy + r);
+  ctx.quadraticCurveTo(cx, cy, cx + r, cy);
+  ctx.closePath();
+  ctx.fill();
+  // mode line
+  ctx.fillStyle = `hsla(${(hue + mode * 17) % 360},80%,70%,0.9)`;
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`#${mode} ${MODE_NAMES[mode]}`, W/2, cy + 22);
+  // help lines
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '11px monospace';
+  for (let i = 0; i < HELP_TEXT.length; i++) {
+    ctx.fillText(HELP_TEXT[i], W/2, cy + 48 + i * 20);
+  }
+  // mic/pose status
+  ctx.font = '10px monospace';
+  ctx.fillStyle = micOn ? 'rgba(0,255,0,0.5)' : 'rgba(255,255,255,0.25)';
+  ctx.fillText(micOn ? '🎤 MIC ON' : '🎤 MIC OFF', W/2, cy + ch - 10);
 }
 
 // ---- beat flash state ----
@@ -156,6 +205,33 @@ let beatSparks = [];
 let poseData = { landmarks: null, active: false, loading: false };
 let poseCam = null;
 let offCam = null; // offscreen canvas for pixel sampling
+
+// ---- lightweight camera (no MediaPipe) ----
+let camLight = null;
+let camLightStream = null;
+
+async function initCamLight() {
+  if (camLight) { deinitCamLight(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } });
+    camLight = document.createElement('video');
+    camLight.srcObject = stream;
+    camLightStream = stream;
+    await camLight.play();
+    offCam = document.createElement('canvas');
+    showToast('📷 Cam ON');
+  } catch(e) {
+    console.warn('Cam light init failed:', e);
+    showToast('📷 Cam FAILED');
+  }
+}
+
+function deinitCamLight() {
+  if (camLightStream) { camLightStream.getTracks().forEach(t => t.stop()); camLightStream = null; }
+  camLight = null;
+  offCam = null;
+  showToast('📷 Cam OFF');
+}
 const BODY_PARTS = [
   { start: 0, end: 10, name: 'head', hue: 0 },    // face
   { start: 11, end: 22, name: 'arms', hue: 120 },   // arms
@@ -516,7 +592,7 @@ function updateGrid() {
           }
           val = ((partHue / 360 + bump * 0.5 + t * 0.02) % 1 + 1) % 1;
           break; }
-        case 14: { // voronoi — psychedelic rainbow cells
+        case 13: { // voronoi — psychedelic rainbow cells
           const nSeeds = 10;
           let minDist = Infinity, minIdx = 0;
           for (let i = 0; i < nSeeds; i++) {
@@ -529,9 +605,6 @@ function updateGrid() {
           const cellHue = (minIdx * 36 + t * 40 + hue) % 360;
           const boundary = Math.exp(-minDist * 160);
           val = ((cellHue / 360) + boundary * 0.25 + t * 0.01) % 1;
-          break; }
-        case 15: { // live camera — pixelated video feed
-          val = ((nx + ny + t * 0.05) * 0.15 + 0.3) % 1;
           break; }
       }
 
@@ -570,9 +643,9 @@ function draw() {
       // beat: extra glow
       if (beat) l = Math.min(98, l + 20);
 
-      // ---- live camera (15) — pixelated video blocks ----
-      if (mode === 15 && offCam && poseCam && poseCam.video && poseCam.video.readyState > 1) {
-        const vw = poseCam.video.videoWidth, vh = poseCam.video.videoHeight;
+      // ---- live cam (99) — lightweight silhouette blocks ----
+      if (mode === 99 && offCam && camLight && camLight.readyState > 1) {
+        const vw = camLight.videoWidth, vh = camLight.videoHeight;
         if (vw > 0 && vh > 0) {
           offCam.width = COLS;
           offCam.height = ROWS;
@@ -580,33 +653,34 @@ function draw() {
           octx.save();
           octx.translate(COLS, 0);
           octx.scale(-1, 1);
-          octx.drawImage(poseCam.video, 0, 0, COLS, ROWS);
+          octx.drawImage(camLight, 0, 0, COLS, ROWS);
           octx.restore();
           const img = octx.getImageData(0, 0, COLS, ROWS).data;
           const px = (r * COLS + c) * 4;
-          const R = img[px], G = img[px+1], B = img[px+2];
-          const bright = (R * 0.3 + G * 0.59 + B * 0.11) / 255;
-          ctx.fillStyle = `rgb(${R},${G},${B})`;
-          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
-          // retro bevel
-          ctx.fillStyle = `rgba(255,255,255,${0.12 + 0.08 * bright})`;
-          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, 2);
-          ctx.fillRect(c * BLOCK, r * BLOCK, 2, BLOCK);
-          ctx.fillStyle = `rgba(0,0,0,${0.15 + 0.1 * (1 - bright)})`;
-          ctx.fillRect(c * BLOCK, r * BLOCK + BLOCK - 2, BLOCK, 2);
-          ctx.fillRect(c * BLOCK + BLOCK - 2, r * BLOCK, 2, BLOCK);
-          // border glow
-          ctx.strokeStyle = `rgba(255,255,255,${0.04 + 0.03 * bright})`;
-          ctx.strokeRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
-        } else {
-          ctx.fillStyle = `hsl(${h|0},${s}%,${l|0}%)`;
-          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+          const bright = (img[px] * 0.3 + img[px+1] * 0.59 + img[px+2] * 0.11) / 255;
+          // silhouette: only show blocks brighter than threshold
+          const thresh = 0.4;
+          if (bright > thresh) {
+            const intensity = (bright - thresh) / (1 - thresh);
+            const h2 = (hue + c * 12 + r * 8 + t * 30) % 360;
+            const l2 = 30 + intensity * 55;
+            ctx.fillStyle = `hsl(${h2|0},100%,${l2|0}%)`;
+            ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+            // bevel
+            ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.12 * intensity})`;
+            ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, 2);
+            ctx.fillRect(c * BLOCK, r * BLOCK, 2, BLOCK);
+            ctx.fillStyle = `rgba(0,0,0,${0.1 + 0.15 * (1 - intensity)})`;
+            ctx.fillRect(c * BLOCK, r * BLOCK + BLOCK - 2, BLOCK, 2);
+            ctx.fillRect(c * BLOCK + BLOCK - 2, r * BLOCK, 2, BLOCK);
+          }
+          // else: block stays dark (background) — no fill
         }
         continue;
       }
 
       // ---- body mode (13) — 3D bump from pose ----
-      if (mode === 13 && poseData.landmarks) {
+      if (mode === 98 && poseData.landmarks) {
         // find nearest landmark for bump height
         const nx2 = c / COLS, ny2 = r / ROWS;
         let minDist = Infinity, minIdx = 0;
@@ -739,6 +813,9 @@ function draw() {
   // menu overlay (on top of everything)
   drawModeMenu();
 
+  // info deck overlay (on top of everything)
+  if (showInfo) drawInfoDeck();
+
   // spectrum visualizer overlay (subtle, bottom edge)
   if (micOn && freqData) {
     const barW = 3;
@@ -818,6 +895,7 @@ document.addEventListener('keydown', e => {
     case '+': case '=': hueSpeed = Math.min(3, hueSpeed + 0.1); return;
     case '-': case '_': hueSpeed = Math.max(0, hueSpeed - 0.1); return;
     case '?': case 'h': case 'H': showMenu = !showMenu; return;
+    case 'i': case 'I': showInfo = !showInfo; return;
   }
 });
 
