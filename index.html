@@ -19,7 +19,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1‥9:mode │ Space │ M │ C │ R │ F │ +/- │ 📱long-press→jog ]</div>
+<div id="info">[ 1‥9:mode │ ←→ │ Space │ M │ C │ R │ F │ +/- │ 📱long-press→jog ]</div>
 <div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
@@ -42,8 +42,16 @@ let cycleTimer = 0;
 let beatFlash = 0; // decays from 1→0
 let beatSparks = [];
 
-// ---- emoji mode palette ----
-const EMOJI_ROWS = ['🎵','🎶','✨','🌟','💫','🎨','🌈','🔥','⭐','🌀'];
+// ---- emoji mode palette (7 separate modes 8-14) ----
+const EMOJI_MODES = [
+  { char: '🎵', name: '🎵Notes'  },
+  { char: '✨', name: '✨Sparkle'},
+  { char: '🌟', name: '🌟Star'   },
+  { char: '💫', name: '💫Dizzy'  },
+  { char: '🌈', name: '🌈Rainbow'},
+  { char: '🔥', name: '🔥Fire'   },
+  { char: '🎨', name: '🎨Palette'},
+];
 
 // ---- audio state ----
 let audioCtx = null;
@@ -257,7 +265,7 @@ function updateGrid() {
           const n = Math.sin(seed) * 0.5 + Math.sin(seed * 3.1) * 0.3 + Math.sin(seed * 7.7) * 0.2;
           val = ((n * 0.5 + 0.5) * (0.5 + vol * 0.5) + t * 0.01) % 1;
           break; }
-        case 8: { // emoji parade — regular patterned animation
+        case 8: case 9: case 10: case 11: case 12: case 13: case 14: { // emoji modes
           const pulse = 0.6 + 0.4 * Math.sin(t * 0.5 + r * 0.3 + c * 0.2);
           val = ((nx + ny + t * 0.05) * 0.3 + pulse * 0.2 + 0.3) % 1;
           break; }
@@ -324,24 +332,51 @@ function draw() {
       // beat: extra glow
       if (beat) l = Math.min(98, l + 20);
 
-      // ---- emoji mode (8) ----
-      if (mode === 8) {
+      // ---- emoji modes (8-14) ----
+      const isEmoji = mode >= 8 && mode <= 14;
+      if (isEmoji) {
+        const ei = mode - 8;
+        const { char: emoji } = EMOJI_MODES[ei];
         // softer background
         ctx.fillStyle = `hsl(${h|0},${s}%,${(l * 0.3 + 15)|0}%)`;
         const bx = c * BLOCK, by = r * BLOCK;
         ctx.fillRect(bx, by, BLOCK, BLOCK);
 
-        // determine emoji for this cell
-        const emojiIdx = (r + Math.floor(t * 0.1)) % EMOJI_ROWS.length;
-        const emoji = EMOJI_ROWS[emojiIdx];
-        // position bob
+        // motion per emoji mode
         const phase = c * 0.7 + r * 0.5 + t * 0.8;
-        const bobX = Math.sin(phase) * BLOCK * 0.15;
-        const bobY = Math.cos(phase * 0.8 + 1.3) * BLOCK * 0.12;
-        // size pulse
-        const size = BLOCK * (0.5 + 0.2 * Math.sin(t * 0.6 + r * 0.4 + c * 0.3));
+        let bobX = 0, bobY = 0, sz = BLOCK * 0.55;
+        switch(ei) {
+          case 0: // 🎵 notes — vertical bounce
+            bobY = Math.sin(phase * 1.3) * BLOCK * 0.18;
+            sz = BLOCK * (0.5 + 0.15 * Math.sin(phase * 0.7));
+            break;
+          case 1: // ✨ sparkle — twinkle scale
+            sz = BLOCK * (0.3 + 0.35 * Math.sin(phase * 1.1 + Math.sin(t * 0.3)));
+            break;
+          case 2: // 🌟 star — orbital drift
+            bobX = Math.sin(phase * 0.9) * BLOCK * 0.2;
+            bobY = Math.cos(phase * 0.9) * BLOCK * 0.15;
+            break;
+          case 3: // 💫 dizzy — spiral jitter
+            bobX = Math.sin(phase * 2.1 + t * 0.5) * BLOCK * 0.12;
+            bobY = Math.cos(phase * 2.1 + t * 0.5) * BLOCK * 0.12;
+            sz = BLOCK * (0.45 + 0.15 * Math.sin(phase * 2.5));
+            break;
+          case 4: // 🌈 rainbow — horizontal wave sweep
+            bobX = Math.sin(phase * 0.5 + t * 0.2) * BLOCK * 0.25;
+            sz = BLOCK * (0.5 + 0.1 * Math.sin(phase * 0.6));
+            break;
+          case 5: // 🔥 fire — upward drift + flicker
+            bobY = -Math.abs(Math.sin(phase * 0.7 + t * 0.4)) * BLOCK * 0.2;
+            sz = BLOCK * (0.4 + 0.25 * Math.sin(phase * 1.7 + t * 0.5));
+            break;
+          case 6: // 🎨 palette — random jitter
+            bobX = Math.sin(Math.sin(phase * 3.1) * 7 + t) * BLOCK * 0.08;
+            bobY = Math.cos(phase * 4.3 + t * 0.3) * BLOCK * 0.08;
+            break;
+        }
 
-        ctx.font = `${Math.max(8, size|0)}px sans-serif`;
+        ctx.font = `${Math.max(8, sz|0)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(emoji, bx + BLOCK/2 + bobX|0, by + BLOCK/2 + bobY|0);
@@ -483,7 +518,7 @@ function updateAutoCycle() {
   cycleTimer++;
   // switch mode every ~4 seconds at 60fps
   if (cycleTimer > 60 * 4) {
-    mode = (mode + 1) % 9;
+    mode = (mode + 1) % 15;
     cycleTimer = 0;
   }
 }
@@ -494,6 +529,8 @@ document.addEventListener('keydown', e => {
   if (k >= '1' && k <= '9') { mode = parseInt(k) - 1; return; }
   switch(k) {
     case ' ': e.preventDefault(); paused = !paused; return;
+    case 'ArrowLeft': mode = (mode - 1 + 15) % 15; showToast(MODE_NAMES[mode]); return;
+    case 'ArrowRight': mode = (mode + 1) % 15; showToast(MODE_NAMES[mode]); return;
     case 'r': case 'R': hue = 0; frame = 0; audio.beat = false; return;
     case 'f': case 'F': c.requestFullscreen(); return;
     case 'm': case 'M': toggleMic(); return;
@@ -527,8 +564,8 @@ let jogDial = {
 
 function execJog(action) {
   switch(action) {
-    case 'prev': mode = (mode - 1 + 9) % 9; showToast(MODE_NAMES[mode]); break;
-    case 'next': mode = (mode + 1) % 9; showToast(MODE_NAMES[mode]); break;
+    case 'prev': mode = (mode - 1 + 15) % 15; showToast(MODE_NAMES[mode]); break;
+    case 'next': mode = (mode + 1) % 15; showToast(MODE_NAMES[mode]); break;
     case 'mic': toggleMic(); showToast(micOn ? '🎤 MIC ON' : '🎤 MIC OFF'); break;
     case 'pause': paused = !paused; showToast(paused ? '⏸ PAUSED' : '▶ PLAY'); break;
     case 'auto': autoCycle = !autoCycle; cycleTimer = 0; showToast(autoCycle ? '🔄 AUTO ON' : '🔄 AUTO OFF'); break;
@@ -613,7 +650,8 @@ function hitTestJogDial(tx, ty) {
 let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
 let touchMoved = false;
 let longPressId = null;
-const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum','🙂Emoji'];
+const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
+  '🎵Notes','✨Sparkle','🌟Star','💫Dizzy','🌈Rainbow','🔥Fire','🎨Palette'];
 
 c.addEventListener('touchstart', e => {
   const t = e.touches[0];
@@ -667,8 +705,8 @@ c.addEventListener('touchend', e => {
   if (touchMoved) {
     const dx = (mouse.x || touchStartX) - touchStartX;
     if (Math.abs(dx) > 50) {
-      if (dx < 0) mode = (mode + 1) % 9;
-      else mode = (mode - 1 + 9) % 9;
+      if (dx < 0) mode = (mode + 1) % 15;
+      else mode = (mode - 1 + 15) % 15;
       showToast(MODE_NAMES[mode]);
     }
     return;
