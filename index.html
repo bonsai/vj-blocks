@@ -19,7 +19,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1‥7:mode │ SPACE:pause │ R:reset │ F:fullscreen │ M:mic │ mouse:drag ]</div>
+<div id="info">[ 1‥7:mode │ SPACE:pause │ R:reset │ F:fullscreen │ M:mic │ C:auto │ +/-:speed │ mouse:drag ]</div>
 <div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
@@ -35,6 +35,12 @@ let mode = 0;
 let paused = false;
 let mouse = {x: -1, y: -1, down: false};
 let frame = 0;
+let autoCycle = false;
+let cycleTimer = 0;
+
+// ---- beat flash state ----
+let beatFlash = 0; // decays from 1→0
+let beatSparks = [];
 
 // ---- audio state ----
 let audioCtx = null;
@@ -141,11 +147,29 @@ function analyzeAudio() {
   audio.treble = trebleN > 0 ? trebleSum / trebleN : 0;
 
   // simple beat detection on bass
+  const prevBeat = audio.beat;
   beatHistory.push(audio.bass);
-  if (beatHistory.length > 43) beatHistory.shift(); // ~1s at 60fps
+  if (beatHistory.length > 43) beatHistory.shift();
   const avg = beatHistory.reduce((a,b) => a+b, 0) / beatHistory.length;
   audio.beat = audio.bass > avg * 1.35 && audio.bass > 0.15;
   audio.beatEnergy = audio.beat ? audio.bass : 0;
+
+  // beat flash & sparks
+  if (audio.beat && !prevBeat) {
+    beatFlash = 1;
+    for (let i = 0; i < 8; i++) {
+      beatSparks.push({
+        x: Math.random(),
+        y: Math.random(),
+        vx: (Math.random() - 0.5) * 0.02,
+        vy: -Math.random() * 0.02 - 0.005,
+        life: 1,
+        decay: 0.015 + Math.random() * 0.02,
+        hue: (hue + Math.random() * 120) % 360,
+        size: 2 + Math.random() * 4
+      });
+    }
+  }
 }
 
 // ---- block renderers per mode ----
@@ -273,6 +297,33 @@ function draw() {
   ctx.lineWidth = beat ? 6 : 4;
   ctx.strokeRect(2, 2, W - 4, H - 4);
 
+  // beat flash overlay
+  if (beatFlash > 0.01) {
+    ctx.fillStyle = `hsla(0,0%,100%,${beatFlash * 0.12})`;
+    ctx.fillRect(0, 0, W, H);
+    beatFlash *= 0.88;
+  }
+
+  // beat sparks (particles)
+  for (let i = beatSparks.length - 1; i >= 0; i--) {
+    const s = beatSparks[i];
+    s.x += s.vx;
+    s.y += s.vy;
+    s.life -= s.decay;
+    if (s.life <= 0) { beatSparks.splice(i, 1); continue; }
+    ctx.fillStyle = `hsla(${s.hue|0},100%,70%,${s.life * 0.6})`;
+    const sx = s.x * W, sy = s.y * H;
+    const sz = s.size * s.life;
+    ctx.fillRect(sx|0, sy|0, sz|0, sz|0);
+  }
+
+  // auto-cycle mode indicator
+  if (autoCycle) {
+    ctx.fillStyle = `hsla(${(hue + 180) % 360},100%,60%,${0.15 + 0.1 * Math.sin(t * 3)})`;
+    ctx.font = '10px monospace';
+    ctx.fillText('AUTO', 16, 30);
+  }
+
   // spectrum visualizer overlay (subtle, bottom edge)
   if (micOn && freqData) {
     const barW = 3;
@@ -317,12 +368,24 @@ function draw() {
 function loop() {
   if (!paused) {
     analyzeAudio();
+    updateAutoCycle();
     hue = (hue + hueSpeed + audio.mid * 0.5) % 360;
     updateGrid();
     draw();
     frame++;
   }
   requestAnimationFrame(loop);
+}
+
+// ---- auto-cycle ----
+function updateAutoCycle() {
+  if (!autoCycle || !micOn) return;
+  cycleTimer++;
+  // switch mode every ~4 seconds at 60fps
+  if (cycleTimer > 60 * 4) {
+    mode = (mode + 1) % 7;
+    cycleTimer = 0;
+  }
 }
 
 // ---- interact ----
@@ -334,6 +397,9 @@ document.addEventListener('keydown', e => {
     case 'r': case 'R': hue = 0; frame = 0; audio.beat = false; return;
     case 'f': case 'F': c.requestFullscreen(); return;
     case 'm': case 'M': toggleMic(); return;
+    case 'c': case 'C': autoCycle = !autoCycle; cycleTimer = 0; return;
+    case '+': case '=': hueSpeed = Math.min(3, hueSpeed + 0.1); return;
+    case '-': case '_': hueSpeed = Math.max(0, hueSpeed - 0.1); return;
   }
 });
 
