@@ -21,7 +21,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1‥9:mode │ ←→ │ ?:menu │ M:mic │ P:pose │ C │ R │ F │ +/- │ 📱long-press→jog ]</div>
+<div id="info">[ 1‥9:mode │ ←→ │ ?:menu │ M:mic │ C │ R │ F │ +/- │ 📱long-press→jog ]</div>
 <div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
@@ -45,25 +45,33 @@ let showMenu = false; // mode selector overlay
 const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
   '🎵Notes','✨Sparkle','🌟Star','💫Dizzy','🌈Rainbow','🔥Fire','🎨Palette',
   '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars',
-  '👤Body'];
+  '👤Body',
+  '🌀Voronoi'];
 const MODE_COLS = 7; // columns in mode menu grid
 
 // ---- hash routing & mode set ----
 function setMode(n) {
-  mode = ((n % 21) + 21) % 21;
+  const prev = mode;
+  mode = ((n % 22) + 22) % 22;
   location.hash = '#' + mode;
   showToast(MODE_NAMES[mode]);
+
+  // pose auto: on in mode 20, off when leaving
+  if (prev !== mode) {
+    if (mode === 20 && !poseData.active) initPose();
+    else if (prev === 20 && poseData.active) deinitPose();
+  }
 }
 
 function initHash() {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 21) mode = h;
+  if (!isNaN(h) && h >= 0 && h < 22) mode = h;
   location.hash = '#' + mode;
 }
 
 window.addEventListener('hashchange', () => {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 21) mode = h;
+  if (!isNaN(h) && h >= 0 && h < 22) mode = h;
 });
 
 // ---- mode menu overlay ----
@@ -491,6 +499,20 @@ function updateGrid() {
           }
           val = ((partHue / 360 + bump * 0.5 + t * 0.02) % 1 + 1) % 1;
           break; }
+        case 21: { // voronoi — psychedelic rainbow cells
+          const nSeeds = 10;
+          let minDist = Infinity, minIdx = 0;
+          for (let i = 0; i < nSeeds; i++) {
+            const sx = 0.5 + 0.38 * Math.sin(i * 2.094 + t * 0.22 + i * 0.7);
+            const sy = 0.5 + 0.38 * Math.cos(i * 1.675 + t * 0.19 + i * 0.9);
+            const dx = nx - sx, dy = ny - sy;
+            const d = dx * dx + dy * dy;
+            if (d < minDist) { minDist = d; minIdx = i; }
+          }
+          const cellHue = (minIdx * 36 + t * 40 + hue) % 360;
+          const boundary = Math.exp(-minDist * 160);
+          val = ((cellHue / 360) + boundary * 0.25 + t * 0.01) % 1;
+          break; }
         case 7: { // spectrum analyzer — mic visual feedback
           const specIdx = Math.floor(c / COLS * freqData.length);
           const idx = Math.min(specIdx, freqData.length - 1);
@@ -814,7 +836,6 @@ document.addEventListener('keydown', e => {
     case 'r': case 'R': hue = 0; frame = 0; audio.beat = false; return;
     case 'f': case 'F': c.requestFullscreen(); return;
     case 'm': case 'M': toggleMic(); return;
-    case 'p': case 'P': togglePose(); return;
     case 'c': case 'C': autoCycle = !autoCycle; cycleTimer = 0; return;
     case '+': case '=': hueSpeed = Math.min(3, hueSpeed + 0.1); return;
     case '-': case '_': hueSpeed = Math.max(0, hueSpeed - 0.1); return;
