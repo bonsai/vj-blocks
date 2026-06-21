@@ -269,6 +269,54 @@ function updateGrid() {
           const pulse = 0.6 + 0.4 * Math.sin(t * 0.5 + r * 0.3 + c * 0.2);
           val = ((nx + ny + t * 0.05) * 0.3 + pulse * 0.2 + 0.3) % 1;
           break; }
+        case 15: { // plasma — demoscene classic
+          const px = nx * 8, py = ny * 6;
+          const p = Math.sin(px * 1.1 + t * 0.8) + Math.sin(py * 0.9 + t * 0.6)
+                  + Math.sin((px + py) * 0.7 + t * 0.5) + Math.sin(Math.sin(px * 1.3 + py * 0.8 + t * 1.1));
+          val = ((p + 4) / 8 * 0.8 + 0.1) % 1;
+          break; }
+        case 16: { // metaballs — organic blobs
+          const nBlobs = 6;
+          let sum = 0;
+          for (let i = 0; i < nBlobs; i++) {
+            const cx = 0.5 + 0.35 * Math.sin(i * 2.1 + t * 0.3 + i * 0.7);
+            const cy = 0.5 + 0.35 * Math.cos(i * 1.7 + t * 0.25 + i * 0.9);
+            const dz = (nx - cx) ** 2 + (ny - cy) ** 2;
+            const r = 0.03 + 0.025 * Math.sin(i * 0.5 + t * 0.15);
+            sum += r / (dz + 0.002);
+          }
+          val = Math.min(1, sum * 2) % 1;
+          break; }
+        case 17: { // ripple — interfering wave rings
+          const gridSize = 3;
+          let sum = 0;
+          for (let gy = 0; gy < gridSize; gy++) {
+            for (let gx = 0; gx < gridSize; gx++) {
+              const sx = (gx + 0.5) / gridSize;
+              const sy = (gy + 0.5) / gridSize;
+              const dx = nx - sx, dy = ny - sy;
+              const d = Math.sqrt(dx * dx + dy * dy);
+              const phase = gy * 1.3 + gx * 0.7;
+              sum += Math.sin(d * 12 - t * 2 + phase) / (d + 0.3);
+            }
+          }
+          val = ((sum / gridSize + 1) * 0.4 + 0.1) % 1;
+          break; }
+        case 18: { // kaleidoscope — 8-fold symmetry
+          const cx = nx - 0.5, cy = ny - 0.5;
+          const a = Math.atan2(cy, cx);
+          const fold = Math.abs(a % (Math.PI / 4) - Math.PI / 8);
+          const d = Math.sqrt(cx * cx + cy * cy) * 6;
+          val = ((Math.sin(d * 1.5 + t * 0.8) + Math.sin(fold * 12 + t * 0.5)) * 0.3 + 0.5) % 1;
+          break; }
+        case 19: { // starfield — warp tunnel
+          const cx = nx - 0.5, cy = ny - 0.5;
+          const d = Math.sqrt(cx * cx + cy * cy);
+          const a = Math.atan2(cy, cx);
+          const warp = d * 4 + t * 1.5;
+          const speedLayer = Math.sin(d * 6 - t * 3 + a * 2);
+          val = ((Math.sin(warp + a * 3) * (1 - d) + speedLayer * 0.3 + 1) * 0.35) % 1;
+          break; }
         case 7: { // spectrum analyzer — mic visual feedback
           const specIdx = Math.floor(c / COLS * freqData.length);
           const idx = Math.min(specIdx, freqData.length - 1);
@@ -518,7 +566,7 @@ function updateAutoCycle() {
   cycleTimer++;
   // switch mode every ~4 seconds at 60fps
   if (cycleTimer > 60 * 4) {
-    mode = (mode + 1) % 15;
+    mode = (mode + 1) % 20;
     cycleTimer = 0;
   }
 }
@@ -529,8 +577,8 @@ document.addEventListener('keydown', e => {
   if (k >= '1' && k <= '9') { mode = parseInt(k) - 1; return; }
   switch(k) {
     case ' ': e.preventDefault(); paused = !paused; return;
-    case 'ArrowLeft': mode = (mode - 1 + 15) % 15; showToast(MODE_NAMES[mode]); return;
-    case 'ArrowRight': mode = (mode + 1) % 15; showToast(MODE_NAMES[mode]); return;
+    case 'ArrowLeft': mode = (mode - 1 + 20) % 20; showToast(MODE_NAMES[mode]); return;
+    case 'ArrowRight': mode = (mode + 1) % 20; showToast(MODE_NAMES[mode]); return;
     case 'r': case 'R': hue = 0; frame = 0; audio.beat = false; return;
     case 'f': case 'F': c.requestFullscreen(); return;
     case 'm': case 'M': toggleMic(); return;
@@ -564,8 +612,8 @@ let jogDial = {
 
 function execJog(action) {
   switch(action) {
-    case 'prev': mode = (mode - 1 + 15) % 15; showToast(MODE_NAMES[mode]); break;
-    case 'next': mode = (mode + 1) % 15; showToast(MODE_NAMES[mode]); break;
+    case 'prev': mode = (mode - 1 + 20) % 20; showToast(MODE_NAMES[mode]); break;
+    case 'next': mode = (mode + 1) % 20; showToast(MODE_NAMES[mode]); break;
     case 'mic': toggleMic(); showToast(micOn ? '🎤 MIC ON' : '🎤 MIC OFF'); break;
     case 'pause': paused = !paused; showToast(paused ? '⏸ PAUSED' : '▶ PLAY'); break;
     case 'auto': autoCycle = !autoCycle; cycleTimer = 0; showToast(autoCycle ? '🔄 AUTO ON' : '🔄 AUTO OFF'); break;
@@ -651,7 +699,8 @@ let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
 let touchMoved = false;
 let longPressId = null;
 const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
-  '🎵Notes','✨Sparkle','🌟Star','💫Dizzy','🌈Rainbow','🔥Fire','🎨Palette'];
+  '🎵Notes','✨Sparkle','🌟Star','💫Dizzy','🌈Rainbow','🔥Fire','🎨Palette',
+  '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars'];
 
 c.addEventListener('touchstart', e => {
   const t = e.touches[0];
@@ -705,8 +754,8 @@ c.addEventListener('touchend', e => {
   if (touchMoved) {
     const dx = (mouse.x || touchStartX) - touchStartX;
     if (Math.abs(dx) > 50) {
-      if (dx < 0) mode = (mode + 1) % 15;
-      else mode = (mode - 1 + 15) % 15;
+      if (dx < 0) mode = (mode + 1) % 20;
+      else mode = (mode - 1 + 20) % 20;
       showToast(MODE_NAMES[mode]);
     }
     return;
