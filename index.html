@@ -42,36 +42,35 @@ let cycleTimer = 0;
 let showMenu = false; // mode selector overlay
 
 // ---- mode display names ----
-const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
-  '🎵Notes','✨Sparkle','🌟Star','💫Dizzy','🌈Rainbow','🔥Fire','🎨Palette',
-  '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars',
-  '👤Body',
-  '🌀Voronoi'];
-const MODE_COLS = 7; // columns in mode menu grid
+const MODE_NAMES = [
+  '🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
+  '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars','👤Body','🌀Voronoi',
+];
+const MODE_COLS = 5; // columns in mode menu grid
 
 // ---- hash routing & mode set ----
 function setMode(n) {
   const prev = mode;
-  mode = ((n % 22) + 22) % 22;
+  mode = ((n % 15) + 15) % 15;
   location.hash = '#' + mode;
   showToast(MODE_NAMES[mode]);
 
-  // pose auto: on in mode 20, off when leaving
+  // pose auto: on in mode 13, off when leaving
   if (prev !== mode) {
-    if (mode === 20 && !poseData.active) initPose();
-    else if (prev === 20 && poseData.active) deinitPose();
+    if (mode === 13 && !poseData.active) initPose();
+    else if (prev === 13 && poseData.active) deinitPose();
   }
 }
 
 function initHash() {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 22) mode = h;
+  if (!isNaN(h) && h >= 0 && h < 15) mode = h;
   location.hash = '#' + mode;
 }
 
 window.addEventListener('hashchange', () => {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 22) mode = h;
+  if (!isNaN(h) && h >= 0 && h < 15) mode = h;
 });
 
 // ---- mode menu overlay ----
@@ -208,16 +207,6 @@ function togglePose() {
   if (poseData.active) deinitPose();
   else initPose();
 }
-
-const EMOJI_MODES = [
-  { char: '🎵', name: '🎵Notes'  },
-  { char: '✨', name: '✨Sparkle'},
-  { char: '🌟', name: '🌟Star'   },
-  { char: '💫', name: '💫Dizzy'  },
-  { char: '🌈', name: '🌈Rainbow'},
-  { char: '🔥', name: '🔥Fire'   },
-  { char: '🎨', name: '🎨Palette'},
-];
 
 // ---- audio state ----
 let audioCtx = null;
@@ -431,88 +420,6 @@ function updateGrid() {
           const n = Math.sin(seed) * 0.5 + Math.sin(seed * 3.1) * 0.3 + Math.sin(seed * 7.7) * 0.2;
           val = ((n * 0.5 + 0.5) * (0.5 + vol * 0.5) + t * 0.01) % 1;
           break; }
-        case 8: case 9: case 10: case 11: case 12: case 13: case 14: { // emoji modes
-          const pulse = 0.6 + 0.4 * Math.sin(t * 0.5 + r * 0.3 + c * 0.2);
-          val = ((nx + ny + t * 0.05) * 0.3 + pulse * 0.2 + 0.3) % 1;
-          break; }
-        case 15: { // plasma — demoscene classic
-          const px = nx * 8, py = ny * 6;
-          const p = Math.sin(px * 1.1 + t * 0.8) + Math.sin(py * 0.9 + t * 0.6)
-                  + Math.sin((px + py) * 0.7 + t * 0.5) + Math.sin(Math.sin(px * 1.3 + py * 0.8 + t * 1.1));
-          val = ((p + 4) / 8 * 0.8 + 0.1) % 1;
-          break; }
-        case 16: { // metaballs — organic blobs
-          const nBlobs = 6;
-          let sum = 0;
-          for (let i = 0; i < nBlobs; i++) {
-            const cx = 0.5 + 0.35 * Math.sin(i * 2.1 + t * 0.3 + i * 0.7);
-            const cy = 0.5 + 0.35 * Math.cos(i * 1.7 + t * 0.25 + i * 0.9);
-            const dz = (nx - cx) ** 2 + (ny - cy) ** 2;
-            const r = 0.03 + 0.025 * Math.sin(i * 0.5 + t * 0.15);
-            sum += r / (dz + 0.002);
-          }
-          val = Math.min(1, sum * 2) % 1;
-          break; }
-        case 17: { // ripple — interfering wave rings
-          const gridSize = 3;
-          let sum = 0;
-          for (let gy = 0; gy < gridSize; gy++) {
-            for (let gx = 0; gx < gridSize; gx++) {
-              const sx = (gx + 0.5) / gridSize;
-              const sy = (gy + 0.5) / gridSize;
-              const dx = nx - sx, dy = ny - sy;
-              const d = Math.sqrt(dx * dx + dy * dy);
-              const phase = gy * 1.3 + gx * 0.7;
-              sum += Math.sin(d * 12 - t * 2 + phase) / (d + 0.3);
-            }
-          }
-          val = ((sum / gridSize + 1) * 0.4 + 0.1) % 1;
-          break; }
-        case 18: { // kaleidoscope — 8-fold symmetry
-          const cx = nx - 0.5, cy = ny - 0.5;
-          const a = Math.atan2(cy, cx);
-          const fold = Math.abs(a % (Math.PI / 4) - Math.PI / 8);
-          const d = Math.sqrt(cx * cx + cy * cy) * 6;
-          val = ((Math.sin(d * 1.5 + t * 0.8) + Math.sin(fold * 12 + t * 0.5)) * 0.3 + 0.5) % 1;
-          break; }
-        case 19: { // starfield — warp tunnel
-          const cx = nx - 0.5, cy = ny - 0.5;
-          const d = Math.sqrt(cx * cx + cy * cy);
-          const a = Math.atan2(cy, cx);
-          const warp = d * 4 + t * 1.5;
-          const speedLayer = Math.sin(d * 6 - t * 3 + a * 2);
-          val = ((Math.sin(warp + a * 3) * (1 - d) + speedLayer * 0.3 + 1) * 0.35) % 1;
-          break; }
-        case 20: { // body — camera pose-reactive blocks
-          let bump = 0, partHue = 0;
-          if (poseData.landmarks && poseData.landmarks.length > 0) {
-            let minDist = Infinity, minIdx = 0;
-            for (let i = 0; i < poseData.landmarks.length; i++) {
-              const l = poseData.landmarks[i];
-              if (l.visibility < 0.3) continue;
-              const dx = nx - l.x, dy = ny - (1 - l.y);
-              const d = dx * dx + dy * dy;
-              if (d < minDist) { minDist = d; minIdx = i; }
-            }
-            bump = Math.exp(-minDist * 180);
-            partHue = minIdx * 11;
-          }
-          val = ((partHue / 360 + bump * 0.5 + t * 0.02) % 1 + 1) % 1;
-          break; }
-        case 21: { // voronoi — psychedelic rainbow cells
-          const nSeeds = 10;
-          let minDist = Infinity, minIdx = 0;
-          for (let i = 0; i < nSeeds; i++) {
-            const sx = 0.5 + 0.38 * Math.sin(i * 2.094 + t * 0.22 + i * 0.7);
-            const sy = 0.5 + 0.38 * Math.cos(i * 1.675 + t * 0.19 + i * 0.9);
-            const dx = nx - sx, dy = ny - sy;
-            const d = dx * dx + dy * dy;
-            if (d < minDist) { minDist = d; minIdx = i; }
-          }
-          const cellHue = (minIdx * 36 + t * 40 + hue) % 360;
-          const boundary = Math.exp(-minDist * 160);
-          val = ((cellHue / 360) + boundary * 0.25 + t * 0.01) % 1;
-          break; }
         case 7: { // spectrum analyzer — mic visual feedback
           const specIdx = Math.floor(c / COLS * freqData.length);
           const idx = Math.min(specIdx, freqData.length - 1);
@@ -538,6 +445,84 @@ function updateGrid() {
             const wy = 0.85 + (wv + 1) * 0.075;
             val = Math.abs(ny - wy) < 0.02 ? ((hue + c * 2 + t * 20) % 360) / 360 : val;
           }
+          break; }
+        case 8: { // plasma — demoscene classic
+          const px = nx * 8, py = ny * 6;
+          const p = Math.sin(px * 1.1 + t * 0.8) + Math.sin(py * 0.9 + t * 0.6)
+                  + Math.sin((px + py) * 0.7 + t * 0.5) + Math.sin(Math.sin(px * 1.3 + py * 0.8 + t * 1.1));
+          val = ((p + 4) / 8 * 0.8 + 0.1) % 1;
+          break; }
+        case 9: { // metaballs — organic blobs
+          const nBlobs = 6;
+          let sum = 0;
+          for (let i = 0; i < nBlobs; i++) {
+            const cx = 0.5 + 0.35 * Math.sin(i * 2.1 + t * 0.3 + i * 0.7);
+            const cy = 0.5 + 0.35 * Math.cos(i * 1.7 + t * 0.25 + i * 0.9);
+            const dz = (nx - cx) ** 2 + (ny - cy) ** 2;
+            const r = 0.03 + 0.025 * Math.sin(i * 0.5 + t * 0.15);
+            sum += r / (dz + 0.002);
+          }
+          val = Math.min(1, sum * 2) % 1;
+          break; }
+        case 10: { // ripple — interfering wave rings
+          const gridSize = 3;
+          let sum = 0;
+          for (let gy = 0; gy < gridSize; gy++) {
+            for (let gx = 0; gx < gridSize; gx++) {
+              const sx = (gx + 0.5) / gridSize;
+              const sy = (gy + 0.5) / gridSize;
+              const dx = nx - sx, dy = ny - sy;
+              const d = Math.sqrt(dx * dx + dy * dy);
+              const phase = gy * 1.3 + gx * 0.7;
+              sum += Math.sin(d * 12 - t * 2 + phase) / (d + 0.3);
+            }
+          }
+          val = ((sum / gridSize + 1) * 0.4 + 0.1) % 1;
+          break; }
+        case 11: { // kaleidoscope — 8-fold symmetry
+          const cx = nx - 0.5, cy = ny - 0.5;
+          const a = Math.atan2(cy, cx);
+          const fold = Math.abs(a % (Math.PI / 4) - Math.PI / 8);
+          const d = Math.sqrt(cx * cx + cy * cy) * 6;
+          val = ((Math.sin(d * 1.5 + t * 0.8) + Math.sin(fold * 12 + t * 0.5)) * 0.3 + 0.5) % 1;
+          break; }
+        case 12: { // starfield — warp tunnel
+          const cx = nx - 0.5, cy = ny - 0.5;
+          const d = Math.sqrt(cx * cx + cy * cy);
+          const a = Math.atan2(cy, cx);
+          const warp = d * 4 + t * 1.5;
+          const speedLayer = Math.sin(d * 6 - t * 3 + a * 2);
+          val = ((Math.sin(warp + a * 3) * (1 - d) + speedLayer * 0.3 + 1) * 0.35) % 1;
+          break; }
+        case 13: { // body — camera pose-reactive blocks
+          let bump = 0, partHue = 0;
+          if (poseData.landmarks && poseData.landmarks.length > 0) {
+            let minDist = Infinity, minIdx = 0;
+            for (let i = 0; i < poseData.landmarks.length; i++) {
+              const l = poseData.landmarks[i];
+              if (l.visibility < 0.3) continue;
+              const dx = nx - (1 - l.x), dy = ny - (1 - l.y);
+              const d = dx * dx + dy * dy;
+              if (d < minDist) { minDist = d; minIdx = i; }
+            }
+            bump = Math.exp(-minDist * 180);
+            partHue = minIdx * 11;
+          }
+          val = ((partHue / 360 + bump * 0.5 + t * 0.02) % 1 + 1) % 1;
+          break; }
+        case 14: { // voronoi — psychedelic rainbow cells
+          const nSeeds = 10;
+          let minDist = Infinity, minIdx = 0;
+          for (let i = 0; i < nSeeds; i++) {
+            const sx = 0.5 + 0.38 * Math.sin(i * 2.094 + t * 0.22 + i * 0.7);
+            const sy = 0.5 + 0.38 * Math.cos(i * 1.675 + t * 0.19 + i * 0.9);
+            const dx = nx - sx, dy = ny - sy;
+            const d = dx * dx + dy * dy;
+            if (d < minDist) { minDist = d; minIdx = i; }
+          }
+          const cellHue = (minIdx * 36 + t * 40 + hue) % 360;
+          const boundary = Math.exp(-minDist * 160);
+          val = ((cellHue / 360) + boundary * 0.25 + t * 0.01) % 1;
           break; }
       }
 
@@ -576,59 +561,8 @@ function draw() {
       // beat: extra glow
       if (beat) l = Math.min(98, l + 20);
 
-      // ---- emoji modes (8-14) ----
-      const isEmoji = mode >= 8 && mode <= 14;
-      if (isEmoji) {
-        const ei = mode - 8;
-        const { char: emoji } = EMOJI_MODES[ei];
-        // softer background
-        ctx.fillStyle = `hsl(${h|0},${s}%,${(l * 0.3 + 15)|0}%)`;
-        const bx = c * BLOCK, by = r * BLOCK;
-        ctx.fillRect(bx, by, BLOCK, BLOCK);
-
-        // motion per emoji mode
-        const phase = c * 0.7 + r * 0.5 + t * 0.8;
-        let bobX = 0, bobY = 0, sz = BLOCK * 0.55;
-        switch(ei) {
-          case 0: // 🎵 notes — vertical bounce
-            bobY = Math.sin(phase * 1.3) * BLOCK * 0.18;
-            sz = BLOCK * (0.5 + 0.15 * Math.sin(phase * 0.7));
-            break;
-          case 1: // ✨ sparkle — twinkle scale
-            sz = BLOCK * (0.3 + 0.35 * Math.sin(phase * 1.1 + Math.sin(t * 0.3)));
-            break;
-          case 2: // 🌟 star — orbital drift
-            bobX = Math.sin(phase * 0.9) * BLOCK * 0.2;
-            bobY = Math.cos(phase * 0.9) * BLOCK * 0.15;
-            break;
-          case 3: // 💫 dizzy — spiral jitter
-            bobX = Math.sin(phase * 2.1 + t * 0.5) * BLOCK * 0.12;
-            bobY = Math.cos(phase * 2.1 + t * 0.5) * BLOCK * 0.12;
-            sz = BLOCK * (0.45 + 0.15 * Math.sin(phase * 2.5));
-            break;
-          case 4: // 🌈 rainbow — horizontal wave sweep
-            bobX = Math.sin(phase * 0.5 + t * 0.2) * BLOCK * 0.25;
-            sz = BLOCK * (0.5 + 0.1 * Math.sin(phase * 0.6));
-            break;
-          case 5: // 🔥 fire — upward drift + flicker
-            bobY = -Math.abs(Math.sin(phase * 0.7 + t * 0.4)) * BLOCK * 0.2;
-            sz = BLOCK * (0.4 + 0.25 * Math.sin(phase * 1.7 + t * 0.5));
-            break;
-          case 6: // 🎨 palette — random jitter
-            bobX = Math.sin(Math.sin(phase * 3.1) * 7 + t) * BLOCK * 0.08;
-            bobY = Math.cos(phase * 4.3 + t * 0.3) * BLOCK * 0.08;
-            break;
-        }
-
-        ctx.font = `${Math.max(8, sz|0)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(emoji, bx + BLOCK/2 + bobX|0, by + BLOCK/2 + bobY|0);
-        continue;
-      }
-
-      // ---- body mode (20) — 3D bump from pose ----
-      if (mode === 20 && poseData.landmarks) {
+      // ---- body mode (13) — 3D bump from pose ----
+      if (mode === 13 && poseData.landmarks) {
         // find nearest landmark for bump height
         const nx2 = c / COLS, ny2 = r / ROWS;
         let minDist = Infinity, minIdx = 0;
