@@ -19,7 +19,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1‥7:mode │ SPACE:pause │ R:reset │ F:fullscreen │ M:mic │ C:auto │ +/-:speed │ mouse:drag ]</div>
+<div id="info">[ 1‥8:mode │ SPACE:pause │ R:reset │ F:fullscreen │ M:mic │ C:auto │ +/-:speed │ mouse:drag ]</div>
 <div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
@@ -54,7 +54,9 @@ let audio = {
   bass: 0,       // 20-250Hz
   mid: 0,        // 250-2kHz
   treble: 0,     // 2-20kHz
-  spectrum: [],  // full frequency data
+  spectrum: [],  // smoothed spectrum for visualizer
+  peak: [],      // peak hold values
+  wave: [],      // smoothed waveform
   beat: false,
   beatEnergy: 0
 };
@@ -85,6 +87,9 @@ async function initMic() {
     src.connect(analyser);
     freqData = new Uint8Array(analyser.frequencyBinCount);
     timeData = new Uint8Array(analyser.frequencyBinCount);
+    audio.spectrum = new Float32Array(analyser.frequencyBinCount);
+    audio.peak = new Float32Array(analyser.frequencyBinCount);
+    audio.wave = new Float32Array(timeData.length);
     micOn = true;
     micEl.classList.add('on');
     micStatus.textContent = 'ON';
@@ -128,6 +133,23 @@ function analyzeAudio() {
   analyser.getByteFrequencyData(freqData);
   const nyquist = audioCtx ? audioCtx.sampleRate / 2 : 24000;
   const binHz = nyquist / freqData.length;
+
+  // smooth spectrum (exponential moving average) + peak hold
+  const smooth = 0.3;
+  const peakDecay = 0.92;
+  for (let i = 0; i < freqData.length; i++) {
+    const raw = freqData[i] / 255;
+    audio.spectrum[i] = audio.spectrum[i] * (1 - smooth) + raw * smooth;
+    audio.peak[i] = Math.max(audio.spectrum[i], audio.peak[i] * peakDecay);
+  }
+
+  // smooth waveform
+  analyser.getByteTimeDomainData(timeData);
+  const waveSmooth = 0.4;
+  for (let i = 0; i < timeData.length; i++) {
+    const raw = (timeData[i] - 128) / 128;
+    audio.wave[i] = audio.wave[i] * (1 - waveSmooth) + raw * waveSmooth;
+  }
 
   // bass: bins 0-5 (~0-250Hz), mid: 6-40 (~250-2kHz), treble: 41+ (~2kHz+)
   let bassSum = 0, midSum = 0, trebleSum = 0;
@@ -231,6 +253,32 @@ function updateGrid() {
           const seed = nx * 37 + ny * 71 + t * 5 + treb * 10;
           const n = Math.sin(seed) * 0.5 + Math.sin(seed * 3.1) * 0.3 + Math.sin(seed * 7.7) * 0.2;
           val = ((n * 0.5 + 0.5) * (0.5 + vol * 0.5) + t * 0.01) % 1;
+          break; }
+        case 7: { // spectrum analyzer — mic visual feedback
+          const specIdx = Math.floor(c / COLS * freqData.length);
+          const idx = Math.min(specIdx, freqData.length - 1);
+          const amp = audio.spectrum[idx] || 0;
+          const peak = audio.peak[idx] || 0;
+          const barH = amp * 0.85;
+          const peakH = peak * 0.85;
+          // bar fill
+          if (ny < barH) {
+            // rainbow by position, brighter at top
+            const bright = 55 + 30 * (1 - ny / barH);
+            val = ((ny * 0.3 + c * 0.1 + t * 0.05) * 360 + hue + idx * 2) / 360;
+          } else if (ny >= peakH - 0.03 && ny <= peakH) {
+            // peak hold dot
+            val = ((hue + idx * 3 + 180) % 360) / 360;
+          } else {
+            val = 0;
+          }
+          // waveform at very bottom (last 2 rows)
+          if (ny > 0.85 && audio.wave.length > 0) {
+            const wIdx = Math.floor(c / COLS * audio.wave.length);
+            const wv = audio.wave[Math.min(wIdx, audio.wave.length - 1)] || 0;
+            const wy = 0.85 + (wv + 1) * 0.075;
+            val = Math.abs(ny - wy) < 0.02 ? ((hue + c * 2 + t * 20) % 360) / 360 : val;
+          }
           break; }
       }
 
@@ -383,7 +431,7 @@ function updateAutoCycle() {
   cycleTimer++;
   // switch mode every ~4 seconds at 60fps
   if (cycleTimer > 60 * 4) {
-    mode = (mode + 1) % 7;
+    mode = (mode + 1) % 8;
     cycleTimer = 0;
   }
 }
@@ -391,7 +439,7 @@ function updateAutoCycle() {
 // ---- interact ----
 document.addEventListener('keydown', e => {
   const k = e.key;
-  if (k >= '1' && k <= '7') { mode = parseInt(k) - 1; return; }
+  if (k >= '1' && k <= '8') { mode = parseInt(k) - 1; return; }
   switch(k) {
     case ' ': e.preventDefault(); paused = !paused; return;
     case 'r': case 'R': hue = 0; frame = 0; audio.beat = false; return;
