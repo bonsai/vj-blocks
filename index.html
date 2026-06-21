@@ -45,32 +45,35 @@ let showMenu = false; // mode selector overlay
 const MODE_NAMES = [
   '🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
   '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars','👤Body','🌀Voronoi',
+  '📷Live',
 ];
-const MODE_COLS = 5; // columns in mode menu grid
+const MODE_COLS = 4; // columns in mode menu grid
 
 // ---- hash routing & mode set ----
 function setMode(n) {
   const prev = mode;
-  mode = ((n % 15) + 15) % 15;
+  mode = ((n % 16) + 16) % 16;
   location.hash = '#' + mode;
   showToast(MODE_NAMES[mode]);
 
-  // pose auto: on in mode 13, off when leaving
+  // pose auto: on in mode 13/15 (both need camera), off when neither active
   if (prev !== mode) {
-    if (mode === 13 && !poseData.active) initPose();
-    else if (prev === 13 && poseData.active) deinitPose();
+    const needsCam = mode === 13 || mode === 15;
+    const hadCam = prev === 13 || prev === 15;
+    if (needsCam && !poseData.active) initPose();
+    else if (!needsCam && hadCam && poseData.active) deinitPose();
   }
 }
 
 function initHash() {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 15) mode = h;
+  if (!isNaN(h) && h >= 0 && h < 16) mode = h;
   location.hash = '#' + mode;
 }
 
 window.addEventListener('hashchange', () => {
   const h = parseInt(location.hash.slice(1));
-  if (!isNaN(h) && h >= 0 && h < 15) mode = h;
+  if (!isNaN(h) && h >= 0 && h < 16) mode = h;
 });
 
 // ---- mode menu overlay ----
@@ -152,6 +155,7 @@ let beatSparks = [];
 // ---- pose tracking state ----
 let poseData = { landmarks: null, active: false, loading: false };
 let poseCam = null;
+let offCam = null; // offscreen canvas for pixel sampling
 const BODY_PARTS = [
   { start: 0, end: 10, name: 'head', hue: 0 },    // face
   { start: 11, end: 22, name: 'arms', hue: 120 },   // arms
@@ -187,6 +191,8 @@ async function initPose() {
       width: 320, height: 240
     });
     await poseCam.start();
+    // offscreen canvas for live pixel sampling
+    offCam = document.createElement('canvas');
     poseData.loading = false;
     showToast('📷 Pose ON');
   } catch(e) {
@@ -524,6 +530,9 @@ function updateGrid() {
           const boundary = Math.exp(-minDist * 160);
           val = ((cellHue / 360) + boundary * 0.25 + t * 0.01) % 1;
           break; }
+        case 15: { // live camera — pixelated video feed
+          val = ((nx + ny + t * 0.05) * 0.15 + 0.3) % 1;
+          break; }
       }
 
       // beat: grid shift per mode
@@ -560,6 +569,41 @@ function draw() {
 
       // beat: extra glow
       if (beat) l = Math.min(98, l + 20);
+
+      // ---- live camera (15) — pixelated video blocks ----
+      if (mode === 15 && offCam && poseCam && poseCam.video && poseCam.video.readyState > 1) {
+        const vw = poseCam.video.videoWidth, vh = poseCam.video.videoHeight;
+        if (vw > 0 && vh > 0) {
+          offCam.width = COLS;
+          offCam.height = ROWS;
+          const octx = offCam.getContext('2d');
+          octx.save();
+          octx.translate(COLS, 0);
+          octx.scale(-1, 1);
+          octx.drawImage(poseCam.video, 0, 0, COLS, ROWS);
+          octx.restore();
+          const img = octx.getImageData(0, 0, COLS, ROWS).data;
+          const px = (r * COLS + c) * 4;
+          const R = img[px], G = img[px+1], B = img[px+2];
+          const bright = (R * 0.3 + G * 0.59 + B * 0.11) / 255;
+          ctx.fillStyle = `rgb(${R},${G},${B})`;
+          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+          // retro bevel
+          ctx.fillStyle = `rgba(255,255,255,${0.12 + 0.08 * bright})`;
+          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, 2);
+          ctx.fillRect(c * BLOCK, r * BLOCK, 2, BLOCK);
+          ctx.fillStyle = `rgba(0,0,0,${0.15 + 0.1 * (1 - bright)})`;
+          ctx.fillRect(c * BLOCK, r * BLOCK + BLOCK - 2, BLOCK, 2);
+          ctx.fillRect(c * BLOCK + BLOCK - 2, r * BLOCK, 2, BLOCK);
+          // border glow
+          ctx.strokeStyle = `rgba(255,255,255,${0.04 + 0.03 * bright})`;
+          ctx.strokeRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+        } else {
+          ctx.fillStyle = `hsl(${h|0},${s}%,${l|0}%)`;
+          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+        }
+        continue;
+      }
 
       // ---- body mode (13) — 3D bump from pose ----
       if (mode === 13 && poseData.landmarks) {
