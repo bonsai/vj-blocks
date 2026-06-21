@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VJ BLOCKS 🌈</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#000}
@@ -19,7 +21,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1‥9:mode │ ←→ │ Space │ M │ C │ R │ F │ +/- │ 📱long-press→jog ]</div>
+<div id="info">[ 1‥9:mode │ ←→ │ ?:menu │ M:mic │ P:pose │ C │ R │ F │ +/- │ 📱long-press→jog ]</div>
 <div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
@@ -37,12 +39,168 @@ let mouse = {x: -1, y: -1, down: false};
 let frame = 0;
 let autoCycle = false;
 let cycleTimer = 0;
+let showMenu = false; // mode selector overlay
+
+// ---- mode display names ----
+const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
+  '🎵Notes','✨Sparkle','🌟Star','💫Dizzy','🌈Rainbow','🔥Fire','🎨Palette',
+  '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars',
+  '👤Body'];
+const MODE_COLS = 7; // columns in mode menu grid
+
+// ---- hash routing & mode set ----
+function setMode(n) {
+  mode = ((n % 21) + 21) % 21;
+  location.hash = '#' + mode;
+  showToast(MODE_NAMES[mode]);
+}
+
+function initHash() {
+  const h = parseInt(location.hash.slice(1));
+  if (!isNaN(h) && h >= 0 && h < 21) mode = h;
+  location.hash = '#' + mode;
+}
+
+window.addEventListener('hashchange', () => {
+  const h = parseInt(location.hash.slice(1));
+  if (!isNaN(h) && h >= 0 && h < 21) mode = h;
+});
+
+// ---- mode menu overlay ----
+function drawModeMenu() {
+  if (!showMenu) return;
+  const mw = 500, mh = 360;
+  const mx = (W - mw) / 2, my = (H - mh) / 2;
+
+  // backdrop
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(mx - 10, my - 10, mw + 20, mh + 20);
+
+  // title
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('🎮 MODE SELECTOR (click/tap to select)', W/2, my + 24);
+
+  // grid
+  const cols = MODE_COLS;
+  const rows = Math.ceil(MODE_NAMES.length / cols);
+  const cellW = mw / cols, cellH = (mh - 40) / rows;
+  const padX = cellW * 0.1, padY = cellH * 0.1;
+
+  for (let i = 0; i < MODE_NAMES.length; i++) {
+    const r = Math.floor(i / cols), c = i % cols;
+    const cx = mx + c * cellW, cy = my + 36 + r * cellH;
+    const active = i === mode;
+
+    ctx.fillStyle = active
+      ? `hsla(${(hue + i * 17) % 360},80%,50%,0.6)`
+      : `hsla(0,0%,30%,0.5)`;
+    ctx.fillRect(cx + padX, cy + padY, cellW - padX * 2, cellH - padY * 2);
+
+    if (active) {
+      ctx.strokeStyle = `hsla(${(hue + i * 17) % 360},100%,70%,0.8)`;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cx + padX, cy + padY, cellW - padX * 2, cellH - padY * 2);
+    }
+
+    ctx.fillStyle = active ? '#fff' : 'rgba(255,255,255,0.6)';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(MODE_NAMES[i], cx + cellW/2, cy + cellH/2);
+  }
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+
+  // hint
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('H or ? to close', W/2, my + mh + 4);
+  ctx.textAlign = 'start';
+}
+
+function hitTestMenu(tx, ty) {
+  if (!showMenu) return -1;
+  const mw = 500, mh = 360;
+  const mx = (W - mw) / 2, my = (H - mh) / 2;
+  const cols = MODE_COLS;
+  const rows = Math.ceil(MODE_NAMES.length / cols);
+  const cellW = mw / cols, cellH = (mh - 40) / rows;
+  for (let i = 0; i < MODE_NAMES.length; i++) {
+    const r = Math.floor(i / cols), c = i % cols;
+    const cx = mx + c * cellW, cy = my + 36 + r * cellH;
+    if (tx >= cx && tx <= cx + cellW && ty >= cy && ty <= cy + cellH) return i;
+  }
+  return -1;
+}
 
 // ---- beat flash state ----
 let beatFlash = 0; // decays from 1→0
 let beatSparks = [];
 
 // ---- emoji mode palette (7 separate modes 8-14) ----
+
+// ---- pose tracking state ----
+let poseData = { landmarks: null, active: false, loading: false };
+let poseCam = null;
+const BODY_PARTS = [
+  { start: 0, end: 10, name: 'head', hue: 0 },    // face
+  { start: 11, end: 22, name: 'arms', hue: 120 },   // arms
+  { start: 23, end: 32, name: 'legs', hue: 240 },   // legs
+];
+
+async function initPose() {
+  if (poseData.active) { deinitPose(); return; }
+  if (poseData.loading) return;
+  poseData.loading = true;
+  showToast('📷 Loading Pose...');
+  try {
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      smoothSegmentation: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    pose.onResults(results => {
+      if (results.poseLandmarks) {
+        poseData.landmarks = results.poseLandmarks;
+        poseData.active = true;
+      }
+    });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } });
+    poseCam = new Camera(document.createElement('video'), {
+      onFrame: async () => { await pose.send({ image: poseCam.video }); },
+      width: 320, height: 240
+    });
+    await poseCam.start();
+    poseData.loading = false;
+    showToast('📷 Pose ON');
+  } catch(e) {
+    console.warn('Pose init failed:', e);
+    poseData.loading = false;
+    showToast('📷 Pose FAILED');
+  }
+}
+
+function deinitPose() {
+  if (poseCam) { poseCam.stop(); poseCam = null; }
+  poseData.landmarks = null;
+  poseData.active = false;
+  showToast('📷 Pose OFF');
+}
+
+function togglePose() {
+  if (poseData.active) deinitPose();
+  else initPose();
+}
+
 const EMOJI_MODES = [
   { char: '🎵', name: '🎵Notes'  },
   { char: '✨', name: '✨Sparkle'},
@@ -317,6 +475,22 @@ function updateGrid() {
           const speedLayer = Math.sin(d * 6 - t * 3 + a * 2);
           val = ((Math.sin(warp + a * 3) * (1 - d) + speedLayer * 0.3 + 1) * 0.35) % 1;
           break; }
+        case 20: { // body — camera pose-reactive blocks
+          let bump = 0, partHue = 0;
+          if (poseData.landmarks && poseData.landmarks.length > 0) {
+            let minDist = Infinity, minIdx = 0;
+            for (let i = 0; i < poseData.landmarks.length; i++) {
+              const l = poseData.landmarks[i];
+              if (l.visibility < 0.3) continue;
+              const dx = nx - l.x, dy = ny - (1 - l.y);
+              const d = dx * dx + dy * dy;
+              if (d < minDist) { minDist = d; minIdx = i; }
+            }
+            bump = Math.exp(-minDist * 180);
+            partHue = minIdx * 11;
+          }
+          val = ((partHue / 360 + bump * 0.5 + t * 0.02) % 1 + 1) % 1;
+          break; }
         case 7: { // spectrum analyzer — mic visual feedback
           const specIdx = Math.floor(c / COLS * freqData.length);
           const idx = Math.min(specIdx, freqData.length - 1);
@@ -431,6 +605,54 @@ function draw() {
         continue;
       }
 
+      // ---- body mode (20) — 3D bump from pose ----
+      if (mode === 20 && poseData.landmarks) {
+        // find nearest landmark for bump height
+        const nx2 = c / COLS, ny2 = r / ROWS;
+        let minDist = Infinity, minIdx = 0;
+        for (let i = 0; i < poseData.landmarks.length; i++) {
+          const l = poseData.landmarks[i];
+          if (l.visibility < 0.3) continue;
+          const dx = nx2 - l.x, dy = ny2 - (1 - l.y);
+          const d = dx * dx + dy * dy;
+          if (d < minDist) { minDist = d; minIdx = i; }
+        }
+        const bump = Math.exp(-minDist * 180);
+        const bHue = (minIdx * 11 + hue) % 360;
+
+        // bump scale for 3D protrusion
+        const bw = BLOCK * (1 + bump * 0.5);
+        const bh = BLOCK * (1 + bump * 0.5);
+        const bx = c * BLOCK + (BLOCK - bw) / 2;
+        const by = r * BLOCK + (BLOCK - bh) / 2;
+
+        // base + bump brightness
+        const bL = 35 + bump * 50;
+        ctx.fillStyle = `hsl(${bHue|0},90%,${bL|0}%)`;
+        ctx.fillRect(bx|0, by|0, bw|0, bh|0);
+
+        // exaggerated 3D: bright top-left, dark bottom-right
+        const highlight = Math.min(95, bL + 25 * bump);
+        ctx.fillStyle = `hsla(${bHue|0},90%,${highlight|0}%,${0.4 + 0.4 * bump})`;
+        ctx.fillRect(bx|0, by|0, bw|0, 3);
+        ctx.fillRect(bx|0, by|0, 3, bh|0);
+
+        const shadow = Math.max(5, bL - 30 * bump);
+        ctx.fillStyle = `hsla(${bHue|0},90%,${shadow|0}%,${0.5 + 0.4 * bump})`;
+        ctx.fillRect(bx|0, (by+bh-3)|0, bw|0, 3);
+        ctx.fillRect((bx+bw-3)|0, by|0, 3, bh|0);
+
+        // glow for near-landmark blocks
+        if (bump > 0.3) {
+          ctx.shadowColor = `hsl(${bHue|0},100%,60%)`;
+          ctx.shadowBlur = BLOCK * bump * 0.5;
+          ctx.fillStyle = `hsla(${bHue|0},100%,${60 + 30 * bump|0}%,${bump * 0.15})`;
+          ctx.fillRect(bx|0, by|0, bw|0, bh|0);
+          ctx.shadowBlur = 0;
+        }
+        continue;
+      }
+
       ctx.fillStyle = `hsl(${h|0},${s}%,${l|0}%)`;
 
       // block size pulses with volume
@@ -507,6 +729,16 @@ function draw() {
     drawJogDial();
   }
 
+  // mode badge (top-left)
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(8, 8, 140, 26);
+  ctx.fillStyle = `hsla(${(hue + mode * 17) % 360},80%,70%,0.9)`;
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText(`#${mode} ${MODE_NAMES[mode]}`, 14, 26);
+
+  // menu overlay (on top of everything)
+  drawModeMenu();
+
   // spectrum visualizer overlay (subtle, bottom edge)
   if (micOn && freqData) {
     const barW = 3;
@@ -566,7 +798,7 @@ function updateAutoCycle() {
   cycleTimer++;
   // switch mode every ~4 seconds at 60fps
   if (cycleTimer > 60 * 4) {
-    mode = (mode + 1) % 20;
+    setMode(mode + 1);
     cycleTimer = 0;
   }
 }
@@ -574,23 +806,31 @@ function updateAutoCycle() {
 // ---- interact ----
 document.addEventListener('keydown', e => {
   const k = e.key;
-  if (k >= '1' && k <= '9') { mode = parseInt(k) - 1; return; }
+  if (k >= '1' && k <= '9') { setMode(parseInt(k) - 1); return; }
   switch(k) {
     case ' ': e.preventDefault(); paused = !paused; return;
-    case 'ArrowLeft': mode = (mode - 1 + 20) % 20; showToast(MODE_NAMES[mode]); return;
-    case 'ArrowRight': mode = (mode + 1) % 20; showToast(MODE_NAMES[mode]); return;
+    case 'ArrowLeft': setMode(mode - 1); return;
+    case 'ArrowRight': setMode(mode + 1); return;
     case 'r': case 'R': hue = 0; frame = 0; audio.beat = false; return;
     case 'f': case 'F': c.requestFullscreen(); return;
     case 'm': case 'M': toggleMic(); return;
+    case 'p': case 'P': togglePose(); return;
     case 'c': case 'C': autoCycle = !autoCycle; cycleTimer = 0; return;
     case '+': case '=': hueSpeed = Math.min(3, hueSpeed + 0.1); return;
     case '-': case '_': hueSpeed = Math.max(0, hueSpeed - 0.1); return;
+    case '?': case 'h': case 'H': showMenu = !showMenu; return;
   }
 });
 
 c.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 c.addEventListener('mousedown', () => mouse.down = true);
 c.addEventListener('mouseup', () => mouse.down = false);
+c.addEventListener('click', e => {
+  if (showMenu) {
+    const mi = hitTestMenu(e.clientX, e.clientY);
+    if (mi >= 0) { setMode(mi); showMenu = false; return; }
+  }
+});
 // ---- jog dial (long-press radial menu) ----
 let jogDial = {
   active: false,
@@ -612,8 +852,8 @@ let jogDial = {
 
 function execJog(action) {
   switch(action) {
-    case 'prev': mode = (mode - 1 + 20) % 20; showToast(MODE_NAMES[mode]); break;
-    case 'next': mode = (mode + 1) % 20; showToast(MODE_NAMES[mode]); break;
+    case 'prev': setMode(mode - 1); break;
+    case 'next': setMode(mode + 1); break;
     case 'mic': toggleMic(); showToast(micOn ? '🎤 MIC ON' : '🎤 MIC OFF'); break;
     case 'pause': paused = !paused; showToast(paused ? '⏸ PAUSED' : '▶ PLAY'); break;
     case 'auto': autoCycle = !autoCycle; cycleTimer = 0; showToast(autoCycle ? '🔄 AUTO ON' : '🔄 AUTO OFF'); break;
@@ -698,9 +938,6 @@ function hitTestJogDial(tx, ty) {
 let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
 let touchMoved = false;
 let longPressId = null;
-const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum',
-  '🎵Notes','✨Sparkle','🌟Star','💫Dizzy','🌈Rainbow','🔥Fire','🎨Palette',
-  '🔮Plasma','🔮Meta','🌊Ripple','🔮Kaleido','✨Stars'];
 
 c.addEventListener('touchstart', e => {
   const t = e.touches[0];
@@ -718,6 +955,13 @@ c.addEventListener('touchstart', e => {
     // touched inside dial but not a button → reset timeout
     jogDial.timeout = 120;
     return; // suppress other gestures while dial active
+  }
+
+  // if menu is active, check grid hit
+  if (showMenu) {
+    const mi = hitTestMenu(t.clientX, t.clientY);
+    if (mi >= 0) { setMode(mi); showMenu = false; return; }
+    return; // block other gestures while menu open
   }
 
   // long press timer (500ms)
@@ -754,9 +998,8 @@ c.addEventListener('touchend', e => {
   if (touchMoved) {
     const dx = (mouse.x || touchStartX) - touchStartX;
     if (Math.abs(dx) > 50) {
-      if (dx < 0) mode = (mode + 1) % 20;
-      else mode = (mode - 1 + 20) % 20;
-      showToast(MODE_NAMES[mode]);
+      if (dx < 0) setMode(mode + 1);
+      else setMode(mode - 1);
     }
     return;
   }
@@ -774,6 +1017,7 @@ function showToast(msg) {
 window.addEventListener('contextmenu', e => e.preventDefault());
 
 // ---- go ----
+initHash();
 loop();
 </script>
 </body>
