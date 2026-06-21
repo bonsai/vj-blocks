@@ -11,22 +11,49 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 #info{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
   font:12px/1 monospace;color:rgba(255,255,255,.3);pointer-events:none;
   text-align:center;letter-spacing:1px}
+#mic{position:fixed;top:16px;right:16px;font:12px/1 monospace;
+  color:rgba(255,255,255,.4);pointer-events:none;text-align:right;
+  transition:color .15s}
+#mic.on{color:#0f0;text-shadow:0 0 8px #0f0}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1-7:colors │ SPACE:pause │ R:reset │ F:fullscreen │ mouse:drag ]</div>
+<div id="info">[ 1-7:colors │ SPACE:pause │ R:reset │ F:fullscreen │ M:mic │ mouse:drag ]</div>
+<div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
+const micEl = document.getElementById('mic');
+const micStatus = document.getElementById('micStatus');
+
 let W, H, COLS, ROWS, BLOCK;
 
 // ---- state ----
 let grid = [];
 let hue = 0, hueSpeed = 0.5;
-let mode = 0; // 0=rainbow-flow, 1=rainbow-static, 2=wave, 3=spiral, 4=noise
+let mode = 0;
 let paused = false;
 let mouse = {x: -1, y: -1, down: false};
 let frame = 0;
+
+// ---- audio state ----
+let audioCtx = null;
+let analyser = null;
+let micStream = null;
+let micOn = false;
+let freqData = null;
+let timeData = null;
+let audio = {
+  volume: 0,     // RMS (0-1)
+  bass: 0,       // 20-250Hz
+  mid: 0,        // 250-2kHz
+  treble: 0,     // 2-20kHz
+  spectrum: [],  // full frequency data
+  beat: false,
+  beatEnergy: 0
+};
+let beatHistory = [];
+const FFT_SIZE = 256;
 
 // ---- resize ----
 function resize() {
@@ -40,12 +67,84 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
-// ---- helpers ----
-function hsl(h, s=100, l=55) { return `hsl(${h|0},${s}%,${l}%)`; }
+// ---- audio engine ----
+async function initMic() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio: true});
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = FFT_SIZE;
+    const src = audioCtx.createMediaStreamSource(micStream);
+    src.connect(analyser);
+    freqData = new Uint8Array(analyser.frequencyBinCount);
+    timeData = new Uint8Array(analyser.frequencyBinCount);
+    micOn = true;
+    micEl.classList.add('on');
+    micStatus.textContent = 'ON';
+    return true;
+  } catch(e) {
+    console.warn('Mic access denied:', e);
+    micOn = false;
+    micEl.classList.remove('on');
+    micStatus.textContent = 'DENIED';
+    return false;
+  }
+}
 
-function rainbow(t) {
-  const h = (t * 360) % 360;
-  return [h, 100, 55 + 15 * Math.sin(t * Math.PI * 2)];
+function closeMic() {
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  analyser = null;
+  micOn = false;
+  micEl.classList.remove('on');
+  micStatus.textContent = 'OFF';
+}
+
+function toggleMic() {
+  if (micOn) { closeMic(); }
+  else { initMic(); }
+}
+
+function analyzeAudio() {
+  if (!analyser || !micOn) return;
+
+  // time-domain (RMS volume)
+  analyser.getByteTimeDomainData(timeData);
+  let sumSq = 0;
+  for (let i = 0; i < timeData.length; i++) {
+    const norm = (timeData[i] - 128) / 128;
+    sumSq += norm * norm;
+  }
+  audio.volume = Math.min(1, Math.sqrt(sumSq / timeData.length) * 2);
+
+  // frequency-domain
+  analyser.getByteFrequencyData(freqData);
+  const nyquist = audioCtx ? audioCtx.sampleRate / 2 : 24000;
+  const binHz = nyquist / freqData.length;
+
+  // bass: bins 0-5 (~0-250Hz), mid: 6-40 (~250-2kHz), treble: 41+ (~2kHz+)
+  let bassSum = 0, midSum = 0, trebleSum = 0;
+  const bassEnd = Math.min(6, freqData.length);
+  const midEnd = Math.min(41, freqData.length);
+  for (let i = 0; i < freqData.length; i++) {
+    const v = freqData[i] / 255;
+    if (i < bassEnd) bassSum += v;
+    else if (i < midEnd) midSum += v;
+    else trebleSum += v;
+  }
+  const bassN = bassEnd;
+  const midN = midEnd - bassEnd;
+  const trebleN = freqData.length - midEnd;
+  audio.bass = bassN > 0 ? bassSum / bassN : 0;
+  audio.mid = midN > 0 ? midSum / midN : 0;
+  audio.treble = trebleN > 0 ? trebleSum / trebleN : 0;
+
+  // simple beat detection on bass
+  beatHistory.push(audio.bass);
+  if (beatHistory.length > 43) beatHistory.shift(); // ~1s at 60fps
+  const avg = beatHistory.reduce((a,b) => a+b, 0) / beatHistory.length;
+  audio.beat = audio.bass > avg * 1.35 && audio.bass > 0.15;
+  audio.beatEnergy = audio.beat ? audio.bass : 0;
 }
 
 // ---- block renderers per mode ----
@@ -54,34 +153,45 @@ function updateGrid() {
   const mX = mouse.down ? mouse.x / W : 0.5;
   const mY = mouse.down ? mouse.y / H : 0.5;
 
+  // audio modulation
+  const vol = audio.volume;
+  const bass = audio.bass;
+  const mid = audio.mid;
+  const treb = audio.treble;
+  const beat = audio.beat ? 1 : 0;
+
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const nx = c / COLS, ny = r / ROWS;
       let val = 0;
 
       switch (mode) {
-        case 0: // rainbow flow — smooth gradient bands
-          val = (nx + ny + t * 0.3) % 1;
+        case 0: // rainbow flow
+          val = (nx + ny + t * (0.3 + mid * 0.3)) % 1;
           break;
         case 1: // static rainbow grid
-          val = ((nx * 3 + ny * 2) % 1 + t * 0.05) % 1;
+          val = ((nx * 3 + ny * 2) % 1 + t * (0.05 + bass * 0.1)) % 1;
           break;
         case 2: { // wave interference
-          const d = Math.sqrt((nx - 0.5)**2 + (ny - mY)**2) * 6;
-          val = (Math.sin(d - t * 2) + 1) * 0.5;
+          const r2 = Math.sqrt((nx - 0.5)**2 + (ny - mY)**2) * (6 + bass * 4);
+          val = (Math.sin(r2 - t * (2 + vol * 2)) + 1) * 0.5;
           break; }
         case 3: { // spiral
           const dx = nx - mX, dy = ny - mY;
           const a = Math.atan2(dy, dx) / (Math.PI * 2);
-          const d = Math.sqrt(dx*dx + dy*dy) * 5;
-          val = ((a + d - t * 0.5) % 1 + 1) % 1;
+          const d = Math.sqrt(dx*dx + dy*dy) * (5 + treb * 3);
+          val = ((a + d - t * (0.5 + mid * 0.5)) % 1 + 1) % 1;
           break; }
         case 4: { // noise / glitch
-          const seed = (nx * 7.31 + ny * 13.17 + t * 1.7);
-          const n = Math.sin(seed) * 0.5 + Math.sin(seed * 1.7) * 0.25 + Math.sin(seed * 4.3) * 0.125;
+          const seed = (nx * 7.31 + ny * 13.17 + t * (1.7 + vol * 1.5));
+          let n = Math.sin(seed) * 0.5 + Math.sin(seed * 1.7) * 0.25 + Math.sin(seed * 4.3) * 0.125;
+          if (beat) n += 0.3 * Math.sin(seed * 8);
           val = ((n * 0.5 + 0.5) + t * 0.02) % 1;
           break; }
       }
+
+      // beat flash
+      if (beat) val = (val + 0.3) % 1;
 
       grid[r][c] = val;
     }
@@ -93,40 +203,58 @@ function draw() {
   ctx.fillRect(0, 0, W, H);
 
   const t = frame * 0.01;
+  const vol = audio.volume;
+  const bass = audio.bass;
+  const beat = audio.beat ? 1 : 0;
 
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      const h = (grid[r][c] * 360 + hue) % 360;
+      // hue advances faster with bass
+      const h = (grid[r][c] * 360 + hue + bass * 30) % 360;
       const s = 100;
-      const l = 50 + 15 * Math.sin(grid[r][c] * Math.PI * 2 + t);
 
-      ctx.fillStyle = `hsl(${h|0},${s}%,${l}%)`;
+      // brightness: base + volume modulation + beat
+      let l = 50 + 15 * Math.sin(grid[r][c] * Math.PI * 2 + t);
+      l += vol * 10;
+      l = Math.min(92, l);
 
-      // retro 3D block effect (top-left highlight)
-      ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+      // beat: extra glow
+      if (beat) l = Math.min(98, l + 20);
 
-      // subtle inner bright edge (retro CRT feel)
-      ctx.fillStyle = `hsla(${h|0},${s}%,${Math.min(l+20,95)|0}%,0.3)`;
-      ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, 2);
-      ctx.fillRect(c * BLOCK, r * BLOCK, 2, BLOCK);
+      ctx.fillStyle = `hsl(${h|0},${s}%,${l|0}%)`;
 
-      // dark shadow (bottom-right)
-      ctx.fillStyle = `hsla(${h|0},${s}%,${Math.max(l-30,5)|0}%,0.4)`;
-      ctx.fillRect(c * BLOCK, r * BLOCK + BLOCK - 2, BLOCK, 2);
-      ctx.fillRect(c * BLOCK + BLOCK - 2, r * BLOCK, 2, BLOCK);
+      // block size pulses with volume
+      const pulse = 1 + vol * 0.15 + (beat ? 0.2 : 0);
+      const bw = BLOCK * pulse;
+      const bh = BLOCK * pulse;
+      const bx = c * BLOCK + (BLOCK - bw) / 2;
+      const by = r * BLOCK + (BLOCK - bh) / 2;
+      ctx.fillRect(bx|0, by|0, bw|0, bh|0);
+
+      // highlight edge
+      ctx.fillStyle = `hsla(${h|0},${s}%,${Math.min(l+15,95)|0}%,0.3)`;
+      ctx.fillRect(bx|0, by|0, bw|0, 2);
+      ctx.fillRect(bx|0, by|0, 2, bh|0);
+
+      // shadow edge
+      ctx.fillStyle = `hsla(${h|0},${s}%,${Math.max(l-25,5)|0}%,0.4)`;
+      ctx.fillRect(bx|0, (by+bh-2)|0, bw|0, 2);
+      ctx.fillRect((bx+bw-2)|0, by|0, 2, bh|0);
     }
   }
 
-  // pulse frame border
-  ctx.strokeStyle = `hsla(${(hue + t * 60) % 360},100%,60%,${0.2 + 0.15 * Math.sin(t * 2)})`;
-  ctx.lineWidth = 4;
+  // beat flash border
+  const flash = beat ? 0.6 : 0.15 + 0.1 * Math.sin(t * 2);
+  ctx.strokeStyle = `hsla(${(hue + t * 60 + bass * 90) % 360},100%,60%,${flash})`;
+  ctx.lineWidth = beat ? 6 : 4;
   ctx.strokeRect(2, 2, W - 4, H - 4);
 }
 
 // ---- loop ----
 function loop() {
   if (!paused) {
-    hue = (hue + hueSpeed) % 360;
+    analyzeAudio();
+    hue = (hue + hueSpeed + audio.mid * 0.5) % 360;
     updateGrid();
     draw();
     frame++;
@@ -140,8 +268,9 @@ document.addEventListener('keydown', e => {
   if (k >= '1' && k <= '7') { mode = parseInt(k) - 1; return; }
   switch(k) {
     case ' ': e.preventDefault(); paused = !paused; return;
-    case 'r': case 'R': hue = 0; frame = 0; return;
+    case 'r': case 'R': hue = 0; frame = 0; audio.beat = false; return;
     case 'f': case 'F': c.requestFullscreen(); return;
+    case 'm': case 'M': toggleMic(); return;
   }
 });
 
@@ -153,8 +282,6 @@ c.addEventListener('touchmove', e => {
   mouse.x = t.clientX; mouse.y = t.clientY; mouse.down = true;
 });
 c.addEventListener('touchend', () => mouse.down = false);
-
-// ---- touch ----
 window.addEventListener('contextmenu', e => e.preventDefault());
 
 // ---- go ----
