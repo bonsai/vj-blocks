@@ -44,7 +44,7 @@ MODE_NAMES[0]='🌈Flow'; MODE_NAMES[1]='🔲Grid'; MODE_NAMES[2]='🌊Wave'; MO
 MODE_NAMES[4]='📺Glitch'; MODE_NAMES[5]='🕳Tunnel'; MODE_NAMES[6]='📊Spectrum';
 MODE_NAMES[8]='🔮Plasma'; MODE_NAMES[9]='🔮Meta'; MODE_NAMES[10]='🌊Ripple'; MODE_NAMES[11]='🔮Kaleido';
 MODE_NAMES[12]='✨Stars'; MODE_NAMES[13]='🌀Voronoi';
-MODE_NAMES[98]='👤Body'; MODE_NAMES[99]='👤Silhouette';
+MODE_NAMES[98]='👤Body'; MODE_NAMES[99]='📷Live';
 const MODE_TOTAL = 100; // max index + 1
 // Active mode indices (non-empty) for the selector menu
 let MODE_ACTIVE = Object.keys(MODE_NAMES).map(Number).filter(i => MODE_NAMES[i]);
@@ -643,7 +643,7 @@ function draw() {
       // beat: extra glow
       if (beat) l = Math.min(98, l + 20);
 
-      // ---- live cam (99) — lightweight silhouette blocks ----
+      // ---- live cam (99) — pixelated camera blocks ----
       if (mode === 99 && offCam && camLight && camLight.readyState > 1) {
         const vw = camLight.videoWidth, vh = camLight.videoHeight;
         if (vw > 0 && vh > 0) {
@@ -657,24 +657,17 @@ function draw() {
           octx.restore();
           const img = octx.getImageData(0, 0, COLS, ROWS).data;
           const px = (r * COLS + c) * 4;
-          const bright = (img[px] * 0.3 + img[px+1] * 0.59 + img[px+2] * 0.11) / 255;
-          // silhouette: only show blocks brighter than threshold
-          const thresh = 0.4;
-          if (bright > thresh) {
-            const intensity = (bright - thresh) / (1 - thresh);
-            const h2 = (hue + c * 12 + r * 8 + t * 30) % 360;
-            const l2 = 30 + intensity * 55;
-            ctx.fillStyle = `hsl(${h2|0},100%,${l2|0}%)`;
-            ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
-            // bevel
-            ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.12 * intensity})`;
-            ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, 2);
-            ctx.fillRect(c * BLOCK, r * BLOCK, 2, BLOCK);
-            ctx.fillStyle = `rgba(0,0,0,${0.1 + 0.15 * (1 - intensity)})`;
-            ctx.fillRect(c * BLOCK, r * BLOCK + BLOCK - 2, BLOCK, 2);
-            ctx.fillRect(c * BLOCK + BLOCK - 2, r * BLOCK, 2, BLOCK);
-          }
-          // else: block stays dark (background) — no fill
+          const R = img[px], G = img[px+1], B = img[px+2];
+          const bright = (R * 0.3 + G * 0.59 + B * 0.11) / 255;
+          ctx.fillStyle = `rgb(${R},${G},${B})`;
+          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+          // retro bevel
+          ctx.fillStyle = `rgba(255,255,255,${0.12 + 0.08 * bright})`;
+          ctx.fillRect(c * BLOCK, r * BLOCK, BLOCK, 2);
+          ctx.fillRect(c * BLOCK, r * BLOCK, 2, BLOCK);
+          ctx.fillStyle = `rgba(0,0,0,${0.15 + 0.1 * (1 - bright)})`;
+          ctx.fillRect(c * BLOCK, r * BLOCK + BLOCK - 2, BLOCK, 2);
+          ctx.fillRect(c * BLOCK + BLOCK - 2, r * BLOCK, 2, BLOCK);
         }
         continue;
       }
