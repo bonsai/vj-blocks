@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📷 CAMERA VJ</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+canvas{display:block;width:100%;height:100%;image-rendering:pixelated;touch-action:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c = document.getElementById('c'), ctx = c.getContext('2d');
+let W, H, COLS, ROWS, BLOCK;
+let grid = [];
+let hue = 0, hueSpeed = 0.5;
+let mode = 0;
+let paused = false;
+let frame = 0;
+const MODE_NAMES = ['👤Body','📷Live'];
+
+// ---- resize ----
+function resize() {
+  W=c.width=innerWidth; H=c.height=innerHeight;
+  BLOCK=Math.max(8,Math.min(32,Math.round(Math.min(W,H)/48)));
+  COLS=Math.ceil(W/BLOCK); ROWS=Math.ceil(H/BLOCK);
+  grid=Array.from({length:ROWS},()=>Array(COLS).fill(0));
+}
+resize(); addEventListener('resize',resize);
+
+// ---- pose ----
+let poseData={landmarks:null,active:false,loading:false};
+let poseCam=null, offCam=null;
+async function initPose(){
+  if(poseData.active||poseData.loading)return;
+  poseData.loading=true;
+  try{
+    const p=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
+    p.setOptions({modelComplexity:1,smoothLandmarks:true,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    p.onResults(r=>{if(r.poseLandmarks)poseData.landmarks=r.poseLandmarks,poseData.active=true});
+    const s=await navigator.mediaDevices.getUserMedia({video:{width:320,height:240,facingMode:'user'}});
+    poseCam=new Camera(document.createElement('video'),{onFrame:async()=>{await p.send({image:poseCam.video})},width:320,height:240});
+    await poseCam.start();
+    offCam=document.createElement('canvas');
+    poseData.loading=false;
+  }catch(e){poseData.loading=false;console.warn(e)}
+}
+function deinitPose(){
+  if(poseCam){poseCam.stop();poseCam=null}
+  poseData.landmarks=null;poseData.active=false;
+}
+
+// ---- light cam ----
+let camLight=null,camLightStream=null;
+async function initCam(){
+  if(camLight)return;
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({video:{width:320,height:240,facingMode:'user'}});
+    camLight=document.createElement('video');camLight.srcObject=s;camLightStream=s;
+    await camLight.play();offCam=document.createElement('canvas');
+  }catch(e){console.warn(e)}
+}
+function deinitCam(){
+  if(camLightStream)camLightStream.getTracks().forEach(t=>t.stop());
+  camLight=null;camLightStream=null;offCam=null;
+}
+
+// ---- mode ----
+function setMode(n){const pv=mode;mode=n%2;location.hash='#'+mode
+  if(pv!==mode){
+    const p=mode===0,h=mode===1,ph=pv===0,hh=pv===1;
+    if(p&&!poseData.active)initPose();else if(ph&&!h)deinitPose();
+    if(h&&!camLight)initCam();else if(hh&&!p)deinitCam();
+  }
+}
+initPose(); // start with body
+loop();
+
+// ---- update ----
+function updateGrid(){
+  const t=frame*0.02;
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const nx=c/COLS,ny=r/ROWS;
+    if(mode===0){ // body — just gradient, drawn in render
+      grid[r][c]=((nx+ny+t*0.05)*0.2+0.3)%1;
+    }else{ // live — gradient bg
+      grid[r][c]=((nx+ny+t*0.05)*0.15+0.3)%1;
+    }
+  }
+}
+
+// ---- draw ----
+function draw(){
+  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+  const t=frame*0.01,vol=0;
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const s=100;
+    let l=50+15*Math.sin(grid[r][c]*Math.PI*2+t),h2=(grid[r][c]*360+hue)%360;
+    l=Math.min(92,l);
+
+    // ---- body mode ----
+    if(mode===0&&poseData.landmarks){
+      const nx2=c/COLS,ny2=r/ROWS;
+      let md=Infinity,mi=0;
+      for(let i=0;i<poseData.landmarks.length;i++){
+        const l2=poseData.landmarks[i];if(l2.visibility<0.3)continue;
+        const dx=nx2-(1-l2.x),dy=ny2-(1-l2.y),d=dx*dx+dy*dy;
+        if(d<md){md=d;mi=i}
+      }
+      const b=Math.exp(-md*180),bh=(mi*11+hue)%360;
+      const bw=BLOCK*(1+b*0.5),bw2=BLOCK*(1+b*0.5);
+      const bx=c*BLOCK+(BLOCK-bw)/2,by=r*BLOCK+(BLOCK-bw2)/2;
+      const bl=35+b*50;
+      ctx.fillStyle=`hsl(${bh|0},90%,${bl|0}%)`;
+      ctx.fillRect(bx|0,by|0,bw|0,bw2|0);
+      ctx.fillStyle=`hsla(${bh|0},90%,${Math.min(95,bl+25*b)|0}%,${0.4+0.4*b})`;
+      ctx.fillRect(bx|0,by|0,bw|0,3);ctx.fillRect(bx|0,by|0,3,bw2|0);
+      ctx.fillStyle=`hsla(${bh|0},90%,${Math.max(5,bl-30*b)|0}%,${0.5+0.4*b})`;
+      ctx.fillRect(bx|0,(by+bw2-3)|0,bw|0,3);ctx.fillRect((bx+bw-3)|0,by|0,3,bw2|0);
+      if(b>0.3){
+        ctx.shadowColor=`hsl(${bh|0},100%,60%)`;ctx.shadowBlur=BLOCK*b*0.5;
+        ctx.fillStyle=`hsla(${bh|0},100%,${60+30*b|0}%,${b*0.15})`;
+        ctx.fillRect(bx|0,by|0,bw|0,bw2|0);ctx.shadowBlur=0;
+      }
+      continue;
+    }
+
+    // ---- live mode ----
+    if(mode===1&&offCam&&camLight&&camLight.readyState>1){
+      const vw=camLight.videoWidth,vh=camLight.videoHeight;
+      if(vw>0&&vh>0){
+        offCam.width=COLS;offCam.height=ROWS;
+        const ox=offCam.getContext('2d');
+        ox.save();ox.translate(COLS,0);ox.scale(-1,1);
+        ox.drawImage(camLight,0,0,COLS,ROWS);ox.restore();
+        const d=ox.getImageData(0,0,COLS,ROWS).data,px=(r*COLS+c)*4;
+        const R=d[px],G=d[px+1],B=d[px+2],br=(R*0.3+G*0.59+B*0.11)/255;
+        ctx.fillStyle=`rgb(${R},${G},${B})`;
+        ctx.fillRect(c*BLOCK,r*BLOCK,BLOCK,BLOCK);
+        ctx.fillStyle=`rgba(255,255,255,${0.12+0.08*br})`;
+        ctx.fillRect(c*BLOCK,r*BLOCK,BLOCK,2);ctx.fillRect(c*BLOCK,r*BLOCK,2,BLOCK);
+        ctx.fillStyle=`rgba(0,0,0,${0.15+0.1*(1-br)})`;
+        ctx.fillRect(c*BLOCK,r*BLOCK+BLOCK-2,BLOCK,2);ctx.fillRect(c*BLOCK+BLOCK-2,r*BLOCK,2,BLOCK);
+      }else{
+        ctx.fillStyle=`hsl(${h2|0},${s}%,${l|0}%)`;
+        ctx.fillRect(c*BLOCK,r*BLOCK,BLOCK,BLOCK);
+      }
+      continue;
+    }
+
+    // normal block
+    ctx.fillStyle=`hsl(${h2|0},${s}%,${l|0}%)`;
+    ctx.fillRect(c*BLOCK,r*BLOCK,BLOCK,BLOCK);
+    ctx.fillStyle=`hsla(${h2|0},${s}%,${Math.min(l+15,95)|0}%,0.3)`;
+    ctx.fillRect(c*BLOCK,r*BLOCK,BLOCK,2);ctx.fillRect(c*BLOCK,r*BLOCK,2,BLOCK);
+    ctx.fillStyle=`hsla(${h2|0},${s}%,${Math.max(l-25,5)|0}%,0.4)`;
+    ctx.fillRect(c*BLOCK,r*BLOCK+BLOCK-2,BLOCK,2);ctx.fillRect(c*BLOCK+BLOCK-2,r*BLOCK,2,BLOCK);
+  }
+  ctx.strokeStyle=`hsla(${(hue+t*60)%360},100%,60%,0.15)`;
+  ctx.lineWidth=4;ctx.strokeRect(2,2,W-4,H-4);
+}
+
+// ---- loop ----
+function loop(){
+  if(!paused){hue=(hue+hueSpeed)%360;updateGrid();draw();frame++}
+  requestAnimationFrame(loop);
+}
+
+// ---- keys ----
+document.addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k==='1')setMode(0);
+  if(k==='2')setMode(1);
+  switch(k){
+    case 'ArrowLeft':setMode(mode-1);return;
+    case 'ArrowRight':setMode(mode+1);return;
+    case ' ':e.preventDefault();paused=!paused;return;
+    case 'f':case 'F':c.requestFullscreen();return;
+    case 'r':case 'R':hue=0;frame=0;return;
+  }
+});
+</script>
+</body>
+</html>
