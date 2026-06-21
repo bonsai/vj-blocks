@@ -19,7 +19,7 @@ canvas{display:block;width:100%;height:100%;image-rendering:pixelated;cursor:non
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="info">[ 1‥8:mode │ SPACE:pause │ R:reset │ F:fullscreen │ M:mic │ C:auto │ +/-:speed │ 📱swipe/tap ]</div>
+<div id="info">[ 1‥8:mode │ SPACE │ M:mic │ C:auto │ R │ F │ +/- │ 📱long-press→jog ]</div>
 <div id="mic">🎤 <span id="micStatus">OFF</span></div>
 <script>
 const c = document.getElementById('c'), ctx = c.getContext('2d');
@@ -386,6 +386,13 @@ function draw() {
     ctx.textAlign = 'start';
   }
 
+  // jog dial (long-press radial menu)
+  if (jogDial.active) {
+    jogDial.timeout--;
+    if (jogDial.timeout <= 0) jogDial.active = false;
+    drawJogDial();
+  }
+
   // spectrum visualizer overlay (subtle, bottom edge)
   if (micOn && freqData) {
     const barW = 3;
@@ -468,9 +475,113 @@ document.addEventListener('keydown', e => {
 c.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 c.addEventListener('mousedown', () => mouse.down = true);
 c.addEventListener('mouseup', () => mouse.down = false);
+// ---- jog dial (long-press radial menu) ----
+let jogDial = {
+  active: false,
+  x: 0, y: 0,
+  timeout: 0,      // auto-dismiss countdown (frames)
+  buttons: [
+    { label: '◀', action: 'prev',  angle: 180 },
+    { label: '▶', action: 'next',  angle: 0 },
+    { label: '🎤', action: 'mic',   angle: 315 },
+    { label: '⏸', action: 'pause', angle: 270 },
+    { label: '🔄', action: 'auto',  angle: 225 },
+    { label: '⏺', action: 'reset', angle: 135 },
+    { label: '+',  action: 'spdup', angle: 90 },
+    { label: '−',  action: 'spddn', angle: 45 },
+  ],
+  dialR: 110,
+  btnR: 22,
+};
+
+function execJog(action) {
+  switch(action) {
+    case 'prev': mode = (mode - 1 + 8) % 8; showToast(MODE_NAMES[mode]); break;
+    case 'next': mode = (mode + 1) % 8; showToast(MODE_NAMES[mode]); break;
+    case 'mic': toggleMic(); showToast(micOn ? '🎤 MIC ON' : '🎤 MIC OFF'); break;
+    case 'pause': paused = !paused; showToast(paused ? '⏸ PAUSED' : '▶ PLAY'); break;
+    case 'auto': autoCycle = !autoCycle; cycleTimer = 0; showToast(autoCycle ? '🔄 AUTO ON' : '🔄 AUTO OFF'); break;
+    case 'reset': hue = 0; frame = 0; audio.beat = false; showToast('⏺ RESET'); break;
+    case 'spdup': hueSpeed = Math.min(3, hueSpeed + 0.1); showToast('+ ' + hueSpeed.toFixed(1)); break;
+    case 'spddn': hueSpeed = Math.max(0, hueSpeed - 0.1); showToast('− ' + hueSpeed.toFixed(1)); break;
+  }
+}
+
+function drawJogDial() {
+  if (!jogDial.active) return;
+  const { x, y, dialR, btnR, buttons } = jogDial;
+  const a = jogDial.timeout > 0 ? Math.min(1, jogDial.timeout / 20) : 1;
+
+  // dim background circle
+  ctx.fillStyle = `rgba(0,0,0,${0.55 * a})`;
+  ctx.beginPath();
+  ctx.arc(x, y, dialR + btnR + 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // outer ring
+  ctx.strokeStyle = `hsla(${(hue + 180) % 360},80%,60%,${0.4 * a})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, dialR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // center label
+  ctx.fillStyle = `rgba(255,255,255,${0.7 * a})`;
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(MODE_NAMES[mode], x, y - 6);
+  ctx.fillStyle = `rgba(255,255,255,${0.4 * a})`;
+  ctx.font = '10px monospace';
+  ctx.fillText('mode', x, y + 12);
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+
+  // jog buttons
+  for (const btn of buttons) {
+    const rad = (btn.angle - 90) * Math.PI / 180;
+    const bx = x + Math.cos(rad) * dialR;
+    const by = y + Math.sin(rad) * dialR;
+    // button circle
+    ctx.fillStyle = `hsla(${(hue + btn.angle * 2) % 360},70%,40%,${0.7 * a})`;
+    ctx.beginPath();
+    ctx.arc(bx, by, btnR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `hsla(0,0%,100%,${0.3 * a})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // label
+    ctx.fillStyle = `rgba(255,255,255,${0.95 * a})`;
+    ctx.font = `${btn.label.length > 1 ? 12 : 16}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(btn.label, bx, by);
+  }
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
+function hitTestJogDial(tx, ty) {
+  if (!jogDial.active) return null;
+  const { x, y, dialR, btnR, buttons } = jogDial;
+  // check buttons first
+  for (const btn of buttons) {
+    const rad = (btn.angle - 90) * Math.PI / 180;
+    const bx = x + Math.cos(rad) * dialR;
+    const by = y + Math.sin(rad) * dialR;
+    const dx = tx - bx, dy = ty - by;
+    if (dx * dx + dy * dy <= btnR * btnR) return btn.action;
+  }
+  // check if inside dial area (dismiss if outside)
+  const dx = tx - x, dy = ty - y;
+  if (dx * dx + dy * dy > (dialR + btnR + 20) * (dialR + btnR + 20)) return 'dismiss';
+  return null; // inside dial but not on a button = ignore
+}
+
 // ---- touch controls ----
 let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
 let touchMoved = false;
+let longPressId = null;
 const MODE_NAMES = ['🌈Flow','🔲Grid','🌊Wave','🌀Spiral','📺Glitch','🕳Tunnel','🔥Fire','📊Spectrum'];
 
 c.addEventListener('touchstart', e => {
@@ -480,6 +591,27 @@ c.addEventListener('touchstart', e => {
   touchStartTime = Date.now();
   touchMoved = false;
   mouse.x = t.clientX; mouse.y = t.clientY; mouse.down = true;
+
+  // if jog dial is active, check button hit on touchstart
+  if (jogDial.active) {
+    const action = hitTestJogDial(t.clientX, t.clientY);
+    if (action === 'dismiss') { jogDial.active = false; return; }
+    if (action) { execJog(action); jogDial.active = false; return; }
+    // touched inside dial but not a button → reset timeout
+    jogDial.timeout = 120;
+    return; // suppress other gestures while dial active
+  }
+
+  // long press timer (500ms)
+  if (longPressId) clearTimeout(longPressId);
+  longPressId = setTimeout(() => {
+    if (!touchMoved) {
+      jogDial.active = true;
+      jogDial.x = touchStartX;
+      jogDial.y = touchStartY;
+      jogDial.timeout = 120; // ~2s auto-dismiss
+    }
+  }, 500);
 });
 
 c.addEventListener('touchmove', e => {
@@ -489,15 +621,20 @@ c.addEventListener('touchmove', e => {
   const dy = t.clientY - touchStartY;
   if (Math.abs(dx) > 20 || Math.abs(dy) > 20) touchMoved = true;
   mouse.x = t.clientX; mouse.y = t.clientY;
+  // cancel long press if moved
+  if (touchMoved && longPressId) { clearTimeout(longPressId); longPressId = null; }
 }, { passive: false });
 
 c.addEventListener('touchend', e => {
   mouse.down = false;
-  // only fire gesture if finger didn't move much (tap, not drag)
+  if (longPressId) { clearTimeout(longPressId); longPressId = null; }
+
+  // jog dial active? handled in touchstart
+  if (jogDial.active) return;
+
+  // swipe gesture
   if (touchMoved) {
-    const dt = Date.now() - touchStartTime;
     const dx = (mouse.x || touchStartX) - touchStartX;
-    // swipe left = next mode, right = prev mode
     if (Math.abs(dx) > 50) {
       if (dx < 0) mode = (mode + 1) % 8;
       else mode = (mode - 1 + 8) % 8;
@@ -505,7 +642,7 @@ c.addEventListener('touchend', e => {
     }
     return;
   }
-  // tap: toggle pause
+  // quick tap: toggle pause
   paused = !paused;
   showToast(paused ? '⏸ PAUSED' : '▶ PLAY');
 });
